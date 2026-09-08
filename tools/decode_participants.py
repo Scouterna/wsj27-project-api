@@ -12,13 +12,7 @@ import json
 import re
 from pathlib import Path
 
-from question_keys import (
-    EXCLUDED_TABS,
-    INTERNAL_KEYS,
-    NON_ANSWER_KEYS,
-    QUESTION_KEYS,
-    SCOUTNET_MIRROR_KEYS,
-)
+from question_keys import EXCLUDED_TABS, NON_ANSWER_KEYS, QUESTION_KEYS
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE_DIR = REPO / "src" / ".dev_cache"
@@ -124,19 +118,6 @@ def group_by_tab_section(items, form: dict, value_fn) -> list[dict]:
         }
         for tid in tab_order
     ]
-
-
-def collect_flat(raw_answers: dict, form: dict, keys: set[str]) -> dict:
-    """Flat {short key: answer} for one of the non-answer buckets."""
-    out = {}
-    for qid, qdef in form["qdefs"].items():
-        key = QUESTION_KEYS[qid]
-        if key not in keys or qid not in raw_answers:
-            continue
-        value = decode_answer(qdef, raw_answers[qid])
-        if value is not None:
-            out[key] = value
-    return out
 
 
 def report_dropped(forms: dict[str, dict]) -> None:
@@ -259,6 +240,27 @@ def validate_templates(templates: dict, forms: dict[str, dict]) -> None:
         raise SystemExit("Template problems:\n  " + "\n  ".join(problems))
 
 
+# Must match CONTACT_TABS in src/app/scoutnet_forms.py. Deliberately duplicated
+# rather than imported: this script is an independent twin of the app decoder,
+# and importing the thing it checks would make the check vacuous.
+CONTACT_TABS = {"Grundläggande information"}
+
+
+def split_contact(forms_data: dict) -> tuple[dict, dict]:
+    """Mirror of the app's _split_contact(): contact tabs leave forms_data."""
+    restricted: dict = {}
+    contact: dict = {}
+    for form_name, tabs in forms_data.items():
+        keep = {tab: sections for tab, sections in tabs.items() if tab not in CONTACT_TABS}
+        for tab, sections in tabs.items():
+            if tab in CONTACT_TABS:
+                for section_title, answers in sections.items():
+                    contact.setdefault(section_title, {}).update(answers)
+        if keep:
+            restricted[form_name] = keep
+    return restricted, contact
+
+
 def build_forms_data(raw_answers: dict, forms: dict[str, dict], templates: dict) -> dict:
     """Fill the templates, keyed form -> tab -> section -> {key: answer}.
 
@@ -307,15 +309,9 @@ def decode_participant(participant: dict, forms: dict[str, dict], templates: dic
     form_name = classify_form(question_ids, forms)
 
     forms_data: dict = {}
-    contact: dict = {}
-    internal: dict = {}
+    contact_info: dict = {}
     if form_name and isinstance(raw_answers, dict):
-        form = forms[form_name]
-        forms_data = build_forms_data(raw_answers, forms, templates)
-        # Kept out of forms_data but still decoded, so the API can feed them into
-        # the general participant structure / internal handling instead.
-        contact = collect_flat(raw_answers, form, SCOUTNET_MIRROR_KEYS)
-        internal = collect_flat(raw_answers, form, INTERNAL_KEYS)
+        forms_data, contact_info = split_contact(build_forms_data(raw_answers, forms, templates))
 
     return {
         "member_no": participant.get("member_no"),
@@ -324,8 +320,7 @@ def decode_participant(participant: dict, forms: dict[str, dict], templates: dic
         "primary_email": participant.get("primary_email"),
         "form": forms[form_name]["meta"]["title"] if form_name else None,
         "forms_data": forms_data,
-        "contact": contact,
-        "internal": internal,
+        "contact_info": contact_info,
     }
 
 
