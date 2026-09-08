@@ -510,6 +510,40 @@
         }
       }
     },
+    "WSJ-relaterad information": {
+      "Erfarenheter": {
+        "87653": {
+          "key": "hasInternationalScoutingExperience",
+          "label": "Har du tidigare erfarenhet av scouting internationellt?"
+        },
+        "87654": {
+          "key": "internationalScoutingExperienceDetails",
+          "label": "Beskriv dina erfarenheter av internationell scouting"
+        },
+        "87655": {
+          "key": "hasIndependentTravelExperience",
+          "label": "Har du erfarenhet av att resa självständigt utomlands, dvs utan vårdnadshavare, scoutledare eller motsvarande?"
+        },
+        "87656": {
+          "key": "independentTravelExperienceDetails",
+          "label": "Beskriv din erfarenhet(er)"
+        }
+      },
+      "Förutsättningar för aktiviteter": {
+        "88354": {
+          "key": "canSwim200m",
+          "label": "Kan du simma minst 200 meter?"
+        },
+        "88356": {
+          "key": "comfortableInLargeCrowds",
+          "label": "Känner du dig bekväm i stora folksamlingar?"
+        },
+        "88360": {
+          "key": "activityPrerequisitesDetails",
+          "label": "Om du behöver förtydliga eller ge mer information om dina förutsättningar, gör det här"
+        }
+      }
+    },
     "Grundläggande information": {
       "Information redan i Scoutnet": {
         "85099": {

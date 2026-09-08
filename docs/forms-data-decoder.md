@@ -63,12 +63,28 @@ Output mirrors it exactly, with answers in place of labels:
 | left out | why |
 |---|---|
 | `Intern information` tab | staff-only fields the applicant never sees |
-| `WSJ-relaterad information` tab | consumed elsewhere in the system |
+| `idCardName` | only field still out of `WSJ-relaterad information`; use unknown, pending |
 | `applicationType`, travel types | already the basic block's `member_type` etc. |
 | language skills | sent to the Jamboree host organisation, not used here |
 
 These are simply absent from the template. `tools/question_keys.py` still
 documents every question id in both forms, including the omitted ones.
+
+Exclusion is per question, not per tab. `WSJ-relaterad information` was excluded
+wholesale until 2026-09-08 and is now in, section by section, except
+`idCardName`:
+
+- `Förutsättningar för aktiviteter` — `canSwim200m`, `comfortableInLargeCrowds`
+  and the free-text `activityPrerequisitesDetails` they share. The box belongs
+  with them: 307 members wrote in it, and the 3 non-swimmers among them explain
+  themselves there ("Kan simma 100m"), which a bare "Nej" would hide.
+- `Erfarenheter` — two Ja/Nej questions, each **paired with its own
+  description** in the template rather than left in the form's own order, so the
+  GUI shows the pairing. Same reason as above: 376 of the 443 who answered the
+  international-scouting gate wrote a description, and every "Ja" has one.
+
+The `Avdelning` section (`buddyRequest*`) disappeared from the form itself on
+the 2026-09-01 refresh and no longer exists to include.
 
 ## `contact_info`: same template, different access level
 
