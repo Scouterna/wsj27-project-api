@@ -1,0 +1,33 @@
+# Secrets / local config — never commit
+.env
+.env.*
+!.env.example
+cmt-roles.csv
+
+# Deployment manifests — kept outside the public repo.
+/k8s/
+
+# Scoutnet dev cache and anything decoded from it: names, personal id numbers,
+# emails and health answers for every participant. Regenerate it by running the
+# app with a Scoutnet key - never commit it.
+src/.dev_cache/
+tools/generated/decoded_participants.json
+
+# CMT roster: names + member numbers. The member_no -> Funktion/Roll mapping the
+# app actually needs lives in k8s/wstest/configmap.yaml, without the names.
+CMT-med-medlemsnummer.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Editor / OS
+# .vscode is committed: the launch config and shared editor settings are part
+# of the project. Personal overrides belong in .vscode/settings.local.json.
+.vscode/*.local.json
+.DS_Store

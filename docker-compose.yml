@@ -1,0 +1,45 @@
+# Local development environment. Not used in production
+#
+# Usage:
+#   Copy .env.example to src/.env and fill in SCOUTNET_PROJECTS, then:
+#   docker compose up --build
+#
+# The api service loads src/.env (the same file used to run the app
+# directly), so settings stay in one place. POSTGRES_DSN and PORT are
+# overridden below: POSTGRES_DSN to point at the db service instead of
+# localhost, PORT because the host-side port mapping can't follow whatever
+# value src/.env happens to set.
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: src/.env
+        required: false
+    environment:
+      POSTGRES_DSN: postgresql://wsj27:wsj27@db:5432/wsj27
+      PORT: 8000
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_USER: wsj27
+      POSTGRES_PASSWORD: wsj27
+      POSTGRES_DB: wsj27
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wsj27"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  db-data:

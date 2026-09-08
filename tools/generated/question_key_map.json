@@ -1,0 +1,1174 @@
+{
+  "languageEnglish": {
+    "question": "På vilken nivå är din engelska?",
+    "tab": null,
+    "section": "Språkkunskaper",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90971"
+    ]
+  },
+  "languageFrench": {
+    "question": "På vilken nivå är din franska?",
+    "tab": null,
+    "section": "Språkkunskaper",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90972"
+    ]
+  },
+  "applicationType": {
+    "question": "Typ av anmälan",
+    "tab": null,
+    "section": null,
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90951",
+      "84942"
+    ],
+    "wording_variants": [
+      "Typ av ansökan"
+    ]
+  },
+  "languageSpanish": {
+    "question": "På vilken nivå är din spanska?",
+    "tab": null,
+    "section": "Språkkunskaper",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90973"
+    ]
+  },
+  "languageArabic": {
+    "question": "På vilken nivå är din arabiska?",
+    "tab": null,
+    "section": "Språkkunskaper",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90974"
+    ]
+  },
+  "hasAlternateEmergencyContact": {
+    "question": "Vill du ange annan nödkontakt än de som står i förra sektionen?",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90975"
+    ]
+  },
+  "specialDiet": {
+    "question": "Har du behov av specialkost?",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93221",
+      "86889"
+    ]
+  },
+  "hasFoodAllergy": {
+    "question": "Har du någon födoämnesrelaterad allergi eller intolerans?",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93223",
+      "88163"
+    ]
+  },
+  "foodAllergyFruit": {
+    "question": "Frukt",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93227",
+      "88159"
+    ]
+  },
+  "foodAllergyFish": {
+    "question": "Fisk",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93226",
+      "88151"
+    ]
+  },
+  "foodAllergyVegetables": {
+    "question": "Grönsak",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93229",
+      "88160"
+    ]
+  },
+  "foodAllergyGluten": {
+    "question": "Gluten",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93228",
+      "88155"
+    ]
+  },
+  "foodAllergyLactose": {
+    "question": "Laktos",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93230",
+      "88147"
+    ]
+  },
+  "foodAllergyMilkProtein": {
+    "question": "Mjölkprotein",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93231",
+      "88148"
+    ]
+  },
+  "foodAllergyNuts": {
+    "question": "Nötter",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93232",
+      "88150"
+    ]
+  },
+  "foodAllergyShellfish": {
+    "question": "Skaldjur",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93233",
+      "88152"
+    ]
+  },
+  "foodAllergyMustard": {
+    "question": "Senap",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93234",
+      "88154"
+    ]
+  },
+  "foodAllergySesame": {
+    "question": "Sesam",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93235",
+      "88157"
+    ]
+  },
+  "foodAllergyOther": {
+    "question": "Övriga",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93239",
+      "88161"
+    ]
+  },
+  "foodAllergyLegumes": {
+    "question": "Baljväxter",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93225",
+      "88153"
+    ]
+  },
+  "foodAllergyCereals": {
+    "question": "Spannmål",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93236",
+      "88156"
+    ]
+  },
+  "foodAllergySulphites": {
+    "question": "Svaveldioxid och sulfit",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93237",
+      "88158"
+    ]
+  },
+  "foodAllergyEgg": {
+    "question": "Ägg",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93238",
+      "88146"
+    ]
+  },
+  "hasOtherAllergy": {
+    "question": "Har du någon allvarligare allergi som inte är födoämnesrelaterad?",
+    "tab": "Hälsoinformation",
+    "section": "Andra allergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93241",
+      "87053"
+    ]
+  },
+  "childhoodVaccinationsComplete": {
+    "question": "Är du vaccinerad mot stelkramp och difteri i enlighet med det svenska barnvaccinationsprogrammet?",
+    "tab": "Hälsoinformation",
+    "section": "Vaccinationer",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93244",
+      "88717"
+    ]
+  },
+  "tetanusBoosterAsAdult": {
+    "question": "Har du fyllt på vaccin mot stelkramp i vuxen ålder?",
+    "tab": "Hälsoinformation",
+    "section": "Vaccinationer",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93247",
+      "91768"
+    ]
+  },
+  "diphtheriaBoosterAsAdult": {
+    "question": "Har du fyllt på vaccin mot difteri i vuxen ålder?",
+    "tab": "Hälsoinformation",
+    "section": "Vaccinationer",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93245",
+      "88718"
+    ]
+  },
+  "usesPrescriptionMedication": {
+    "question": "Använder du några receptbelagda läkemedel?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93249",
+      "89840"
+    ]
+  },
+  "mobilityAids": {
+    "question": "Har du behov av att använda något av följande hjälpmedel?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93262",
+      "87062"
+    ]
+  },
+  "medicationStorageNeeded": {
+    "question": "Behöver denna förvaras på något speciellt sätt?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93254",
+      "93252"
+    ]
+  },
+  "hasMedicalCondition": {
+    "question": "Har du någon sjukdom såsom epelepsi, diabetes, inflamatorisk tarmsjukdom, hjärtsjukdom eller annat?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93255",
+      "91238"
+    ]
+  },
+  "needsMedicalEquipment": {
+    "question": "Har du något behov av medicinsk utrustning?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93257",
+      "87058"
+    ]
+  },
+  "cognitiveDiagnoses": {
+    "question": "Har du någon form av diagnos eller kognitiv funktionsnedsättning? Exempelvis",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93265",
+      "91796"
+    ]
+  },
+  "medicalEquipmentNeeds": {
+    "question": "Vilka behov har du?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93258",
+      "87059"
+    ]
+  },
+  "hasPhysicalLimitations": {
+    "question": "Har du några fysiska begränsningar?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93260",
+      "87060"
+    ]
+  },
+  "hasPhobia": {
+    "question": "Har du någon fobi som begränsar dig i din vardag?",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93267",
+      "91266"
+    ]
+  },
+  "hasMentalHealthCondition": {
+    "question": "Har du eller utreds du för (pågående) ångestproblematik, diagnostiserad ätstörning, PTSD eller liknande?",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93269",
+      "91268"
+    ]
+  },
+  "leaderTravelType": {
+    "question": "Med rundresa eller direktresa",
+    "tab": null,
+    "section": null,
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "93357"
+    ]
+  },
+  "scoutViewAccessType": {
+    "question": "Accesstyp",
+    "tab": "Intern information",
+    "section": "Access ScoutView",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "110268"
+    ]
+  },
+  "mobilePhone": {
+    "question": "Mobilnummer",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90956",
+      "85100"
+    ],
+    "wording_variants": [
+      "Ansökandes mobiltelefon"
+    ]
+  },
+  "specialDietDetails": {
+    "question": "Beskriv din specialkost i detalj",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93222",
+      "88716"
+    ]
+  },
+  "emergencyContact1Email": {
+    "question": "Primär nödkontakt - E-post",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90977"
+    ]
+  },
+  "physicalLimitationsDetails": {
+    "question": "Ange vilka och det behov du har",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93261",
+      "87061"
+    ]
+  },
+  "otherAllergyDetails": {
+    "question": "Beskriv din allergi eller allergier, hur allvarligt du reagerar och vilken medicin du behöver ha med dig",
+    "tab": "Hälsoinformation",
+    "section": "Andra allergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93242",
+      "88178"
+    ]
+  },
+  "cognitiveDiagnosesDetails": {
+    "question": "Berätta hur din funktionsnedsättning eller diganos påverkar dig i din vardag och vilket stöd / anpassning du behöver",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93266",
+      "87066"
+    ]
+  },
+  "unitNumber": {
+    "question": "Avdelning",
+    "tab": "Intern information",
+    "section": "Avdelningsledare",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "107592",
+      "88168"
+    ]
+  },
+  "medicalEquipmentDetails": {
+    "question": "Berätta vad du behöver",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93259",
+      "87313"
+    ]
+  },
+  "emergencyContact2Name": {
+    "question": "Sekundär nödkontakt - Namn",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90980"
+    ]
+  },
+  "email": {
+    "question": "Din e-postadress",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90954",
+      "85097"
+    ]
+  },
+  "foodAllergyDetails": {
+    "question": "Beskriv din allergi(er) och samt hur du reagerar vid ett allergiskt anfall",
+    "tab": "Hälsoinformation",
+    "section": "Diet och födoämnesallergier",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93240",
+      "88162"
+    ]
+  },
+  "emergencyContact1Relation": {
+    "question": "Primär nödkontakt - Relation",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90979"
+    ]
+  },
+  "otherMobilityAidsDetails": {
+    "question": "Ange de andra hjälpmedel du är i behov av",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93264",
+      "87063"
+    ]
+  },
+  "emergencyContact2Email": {
+    "question": "Sekundär nödkontakt - E-post",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90981"
+    ]
+  },
+  "mentalHealthDetails": {
+    "question": "Beskriv vad och hur den påverkar dig i din vardag",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93270",
+      "91269"
+    ]
+  },
+  "emergencyContact2Phone": {
+    "question": "Sekundär nödkontakt - Mobiltelefon",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90982"
+    ]
+  },
+  "nextOfKin2Name": {
+    "question": "Närstående 2 - Namn",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90961",
+      "85104"
+    ]
+  },
+  "nextOfKin2Email": {
+    "question": "Närstående 2 - E-post",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90962",
+      "85105"
+    ]
+  },
+  "nextOfKin2Relation": {
+    "question": "Närstående - Relation",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90964",
+      "88137"
+    ],
+    "wording_variants": [
+      "Närstående 2 - Relation"
+    ]
+  },
+  "additionalInfo": {
+    "question": "Finns det något vi inte frågat om som du vill att kontingentledningen bör känna till?",
+    "tab": "Hälsoinformation",
+    "section": "Övriga frågor",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93211",
+      "93212"
+    ]
+  },
+  "medicationDetails": {
+    "question": "Vilket eller vilka läkemedel och i vilken dos?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93250",
+      "92454"
+    ]
+  },
+  "emergencyContact1Name": {
+    "question": "Primär nödkontakt - Namn",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90976"
+    ]
+  },
+  "emergencyContact2Relation": {
+    "question": "Sekundär nödkontakt - Relation",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90983"
+    ]
+  },
+  "nextOfKin1Name": {
+    "question": "Närstående 1 - Namn",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90957",
+      "85101"
+    ]
+  },
+  "nextOfKin2Phone": {
+    "question": "Närstående 2 - Mobiltelefon",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90963",
+      "85106"
+    ]
+  },
+  "nextOfKin1Relation": {
+    "question": "Närstående 1 - Relation",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90960",
+      "87647"
+    ]
+  },
+  "medicationStorageDetails": {
+    "question": "Hur då?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93251",
+      "89841"
+    ]
+  },
+  "tetanusBoosterYear": {
+    "question": "Vilket år fyllde du på stelkramp?",
+    "tab": "Hälsoinformation",
+    "section": "Vaccinationer",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93248",
+      "91766"
+    ]
+  },
+  "phobiaDetails": {
+    "question": "Beskriv din fobi och hur den påverkar dig",
+    "tab": "Hälsoinformation",
+    "section": "Psykisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93268",
+      "91267"
+    ]
+  },
+  "medicalConditionDetails": {
+    "question": "Beskriv din sjukdom och hur den påverkar dig",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93256",
+      "91239"
+    ]
+  },
+  "nextOfKin1Email": {
+    "question": "Närstående 1 - E-post",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90958",
+      "85102"
+    ]
+  },
+  "nextOfKin1Phone": {
+    "question": "Närstående 1 - Mobiltelefon",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90959",
+      "85103"
+    ]
+  },
+  "diphtheriaBoosterYear": {
+    "question": "Vilket år fyllde du på difteri?",
+    "tab": "Hälsoinformation",
+    "section": "Vaccinationer",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93246",
+      "91767"
+    ]
+  },
+  "alternateEmail": {
+    "question": "Alternativ e-postadress",
+    "tab": null,
+    "section": "Information redan i Scoutnet",
+    "forms": [
+      "avdelningsledare_kontingentledning",
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "90955",
+      "85099"
+    ]
+  },
+  "emergencyContact1Phone": {
+    "question": "Primär nödkontakt - Mobiltelefon",
+    "tab": null,
+    "section": "Annan nödkontakt",
+    "forms": [
+      "avdelningsledare_kontingentledning"
+    ],
+    "question_ids": [
+      "90978"
+    ]
+  },
+  "participantTravelType": {
+    "question": "Deltagandetyp",
+    "tab": "Ansökan",
+    "section": null,
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "84941"
+    ]
+  },
+  "istTravelType": {
+    "question": "Funktionärstyp",
+    "tab": "Ansökan",
+    "section": null,
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "85095"
+    ]
+  },
+  "hasInternationalScoutingExperience": {
+    "question": "Har du tidigare erfarenhet av scouting internationellt?",
+    "tab": "WSJ-relaterad information",
+    "section": "Erfarenheter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87653"
+    ]
+  },
+  "hasIndependentTravelExperience": {
+    "question": "Har du erfarenhet av att resa självständigt utomlands, dvs utan vårdnadshavare, scoutledare eller motsvarande?",
+    "tab": "WSJ-relaterad information",
+    "section": "Erfarenheter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87655"
+    ]
+  },
+  "healthPatrolAssessment": {
+    "question": "Bedömning hälsopatrull",
+    "tab": "Intern information",
+    "section": "Supportnoteringar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88169"
+    ]
+  },
+  "needsPersonalAssistant": {
+    "question": "Har du behov av ta med dig personlig assistent under arrangemanget?",
+    "tab": "Hälsoinformation",
+    "section": "Förutsättningar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87311"
+    ]
+  },
+  "canSwim200m": {
+    "question": "Kan du simma minst 200 meter?",
+    "tab": "WSJ-relaterad information",
+    "section": "Förutsättningar för aktiviteter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88354"
+    ]
+  },
+  "comfortableInLargeCrowds": {
+    "question": "Känner du dig bekväm i stora folksamlingar?",
+    "tab": "WSJ-relaterad information",
+    "section": "Förutsättningar för aktiviteter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88356"
+    ]
+  },
+  "sensitivityToUnpredictability": {
+    "question": "Reagerar du på saker som oregelbundna måltider, information som ändras sent och/eller flera gånger, eller varierande möjligheter tilll egentid?",
+    "tab": "Hälsoinformation",
+    "section": "Förutsättningar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88720"
+    ]
+  },
+  "needsSupportForUnpredictability": {
+    "question": "Har du behov av stöttning för att kunna hantera detta bättre?",
+    "tab": "Hälsoinformation",
+    "section": "Förutsättningar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "89842"
+    ]
+  },
+  "managesOwnMedication": {
+    "question": "Kan du själv ta ansvar för din medicinering?",
+    "tab": "Hälsoinformation",
+    "section": "Fysisk hälsa",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "93253"
+    ]
+  },
+  "registrationStatus": {
+    "question": "Status",
+    "tab": "Intern information",
+    "section": "Supportnoteringar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "107593"
+    ]
+  },
+  "criminalRecordCheckedBy": {
+    "question": "Kontrollant brottsregister",
+    "tab": "Intern information",
+    "section": "Supportnoteringar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88172"
+    ]
+  },
+  "unpredictabilityDetails": {
+    "question": "Beskriv hur detta påverkar dig",
+    "tab": "Hälsoinformation",
+    "section": "Förutsättningar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "89888"
+    ]
+  },
+  "additionalInfoUnitLeader": {
+    "question": "Finns det något vi inte frågat om som du vill att avdelningsledare eller kontingentledningen bör känna till?",
+    "tab": "Hälsoinformation",
+    "section": "Övriga frågor",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87312"
+    ]
+  },
+  "healthPatrolAssessorId": {
+    "question": "Bedömmare hälsopatrull (Id)",
+    "tab": "Intern information",
+    "section": "Supportnoteringar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88170"
+    ]
+  },
+  "internationalScoutingExperienceDetails": {
+    "question": "Beskriv dina erfarenheter av internationell scouting",
+    "tab": "WSJ-relaterad information",
+    "section": "Erfarenheter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87654"
+    ]
+  },
+  "idCardName": {
+    "question": "Skriv exakt vad du vill ska stå på ditt ID-kort",
+    "tab": "WSJ-relaterad information",
+    "section": "Övrigt",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88364"
+    ]
+  },
+  "independentTravelExperienceDetails": {
+    "question": "Beskriv din erfarenhet(er)",
+    "tab": "WSJ-relaterad information",
+    "section": "Erfarenheter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "87656"
+    ]
+  },
+  "internalNote": {
+    "question": "Notering",
+    "tab": "Intern information",
+    "section": "Supportnoteringar",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88171"
+    ]
+  },
+  "activityPrerequisitesDetails": {
+    "question": "Om du behöver förtydliga eller ge mer information om dina förutsättningar, gör det här",
+    "tab": "WSJ-relaterad information",
+    "section": "Förutsättningar för aktiviteter",
+    "forms": [
+      "deltagare_ist"
+    ],
+    "question_ids": [
+      "88360"
+    ]
+  }
+}

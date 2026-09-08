@@ -1,0 +1,566 @@
+{
+  "avdelningsledare_kontingentledning": {
+    "Grundläggande information": {
+      "Annan nödkontakt": {
+        "90975": {
+          "key": "hasAlternateEmergencyContact",
+          "label": "Vill du ange annan nödkontakt än de som står i förra sektionen?"
+        },
+        "90977": {
+          "key": "emergencyContact1Email",
+          "label": "Primär nödkontakt - E-post"
+        },
+        "90980": {
+          "key": "emergencyContact2Name",
+          "label": "Sekundär nödkontakt - Namn"
+        },
+        "90979": {
+          "key": "emergencyContact1Relation",
+          "label": "Primär nödkontakt - Relation"
+        },
+        "90981": {
+          "key": "emergencyContact2Email",
+          "label": "Sekundär nödkontakt - E-post"
+        },
+        "90982": {
+          "key": "emergencyContact2Phone",
+          "label": "Sekundär nödkontakt - Mobiltelefon"
+        },
+        "90976": {
+          "key": "emergencyContact1Name",
+          "label": "Primär nödkontakt - Namn"
+        },
+        "90983": {
+          "key": "emergencyContact2Relation",
+          "label": "Sekundär nödkontakt - Relation"
+        },
+        "90978": {
+          "key": "emergencyContact1Phone",
+          "label": "Primär nödkontakt - Mobiltelefon"
+        }
+      },
+      "Information redan i Scoutnet": {
+        "90956": {
+          "key": "mobilePhone",
+          "label": "Ansökandes mobiltelefon"
+        },
+        "90954": {
+          "key": "email",
+          "label": "Din e-postadress"
+        },
+        "90961": {
+          "key": "nextOfKin2Name",
+          "label": "Närstående 2 - Namn"
+        },
+        "90962": {
+          "key": "nextOfKin2Email",
+          "label": "Närstående 2 - E-post"
+        },
+        "90964": {
+          "key": "nextOfKin2Relation",
+          "label": "Närstående 2 - Relation"
+        },
+        "90957": {
+          "key": "nextOfKin1Name",
+          "label": "Närstående 1 - Namn"
+        },
+        "90963": {
+          "key": "nextOfKin2Phone",
+          "label": "Närstående 2 - Mobiltelefon"
+        },
+        "90960": {
+          "key": "nextOfKin1Relation",
+          "label": "Närstående 1 - Relation"
+        },
+        "90958": {
+          "key": "nextOfKin1Email",
+          "label": "Närstående 1 - E-post"
+        },
+        "90959": {
+          "key": "nextOfKin1Phone",
+          "label": "Närstående 1 - Mobiltelefon"
+        },
+        "90955": {
+          "key": "alternateEmail",
+          "label": "Alternativ e-postadress"
+        }
+      }
+    },
+    "Hälsoinformation": {
+      "Diet och födoämnesallergier": {
+        "93221": {
+          "key": "specialDiet",
+          "label": "Har du behov av specialkost?"
+        },
+        "93223": {
+          "key": "hasFoodAllergy",
+          "label": "Har du någon födoämnesrelaterad allergi eller intolerans?"
+        },
+        "93227": {
+          "key": "foodAllergyFruit",
+          "label": "Frukt"
+        },
+        "93226": {
+          "key": "foodAllergyFish",
+          "label": "Fisk"
+        },
+        "93229": {
+          "key": "foodAllergyVegetables",
+          "label": "Grönsak"
+        },
+        "93228": {
+          "key": "foodAllergyGluten",
+          "label": "Gluten"
+        },
+        "93230": {
+          "key": "foodAllergyLactose",
+          "label": "Laktos"
+        },
+        "93231": {
+          "key": "foodAllergyMilkProtein",
+          "label": "Mjölkprotein"
+        },
+        "93232": {
+          "key": "foodAllergyNuts",
+          "label": "Nötter"
+        },
+        "93233": {
+          "key": "foodAllergyShellfish",
+          "label": "Skaldjur"
+        },
+        "93234": {
+          "key": "foodAllergyMustard",
+          "label": "Senap"
+        },
+        "93235": {
+          "key": "foodAllergySesame",
+          "label": "Sesam"
+        },
+        "93239": {
+          "key": "foodAllergyOther",
+          "label": "Övriga"
+        },
+        "93225": {
+          "key": "foodAllergyLegumes",
+          "label": "Baljväxter"
+        },
+        "93236": {
+          "key": "foodAllergyCereals",
+          "label": "Spannmål"
+        },
+        "93237": {
+          "key": "foodAllergySulphites",
+          "label": "Svaveldioxid och sulfit"
+        },
+        "93238": {
+          "key": "foodAllergyEgg",
+          "label": "Ägg"
+        },
+        "93222": {
+          "key": "specialDietDetails",
+          "label": "Beskriv din specialkost i detalj"
+        },
+        "93240": {
+          "key": "foodAllergyDetails",
+          "label": "Beskriv din allergi(er) och samt hur du reagerar vid ett allergiskt anfall"
+        }
+      },
+      "Andra allergier": {
+        "93241": {
+          "key": "hasOtherAllergy",
+          "label": "Har du någon allvarligare allergi som inte är födoämnesrelaterad?"
+        },
+        "93242": {
+          "key": "otherAllergyDetails",
+          "label": "Beskriv din allergi eller allergier, hur allvarligt du reagerar och vilken medicin du behöver ha med dig"
+        }
+      },
+      "Vaccinationer": {
+        "93244": {
+          "key": "childhoodVaccinationsComplete",
+          "label": "Är du vaccinerad mot stelkramp och difteri i enlighet med det svenska barnvaccinationsprogrammet?"
+        },
+        "93247": {
+          "key": "tetanusBoosterAsAdult",
+          "label": "Har du fyllt på vaccin mot stelkramp i vuxen ålder?"
+        },
+        "93245": {
+          "key": "diphtheriaBoosterAsAdult",
+          "label": "Har du fyllt på vaccin mot difteri i vuxen ålder?"
+        },
+        "93248": {
+          "key": "tetanusBoosterYear",
+          "label": "Vilket år fyllde du på stelkramp?"
+        },
+        "93246": {
+          "key": "diphtheriaBoosterYear",
+          "label": "Vilket år fyllde du på difteri?"
+        }
+      },
+      "Fysisk hälsa": {
+        "93249": {
+          "key": "usesPrescriptionMedication",
+          "label": "Använder du några receptbelagda läkemedel?"
+        },
+        "93262": {
+          "key": "mobilityAids",
+          "label": "Har du behov av att använda något av följande hjälpmedel?"
+        },
+        "93254": {
+          "key": "medicationStorageNeeded",
+          "label": "Behöver denna förvaras på något speciellt sätt?"
+        },
+        "93255": {
+          "key": "hasMedicalCondition",
+          "label": "Har du någon sjukdom såsom epelepsi, diabetes, inflamatorisk tarmsjukdom, hjärtsjukdom eller annat?"
+        },
+        "93257": {
+          "key": "needsMedicalEquipment",
+          "label": "Har du något behov av medicinsk utrustning?"
+        },
+        "93258": {
+          "key": "medicalEquipmentNeeds",
+          "label": "Vilka behov har du?"
+        },
+        "93260": {
+          "key": "hasPhysicalLimitations",
+          "label": "Har du några fysiska begränsningar?"
+        },
+        "93261": {
+          "key": "physicalLimitationsDetails",
+          "label": "Ange vilka och det behov du har"
+        },
+        "93259": {
+          "key": "medicalEquipmentDetails",
+          "label": "Berätta vad du behöver"
+        },
+        "93264": {
+          "key": "otherMobilityAidsDetails",
+          "label": "Ange de andra hjälpmedel du är i behov av"
+        },
+        "93250": {
+          "key": "medicationDetails",
+          "label": "Vilket eller vilka läkemedel och i vilken dos?"
+        },
+        "93251": {
+          "key": "medicationStorageDetails",
+          "label": "Hur då?"
+        },
+        "93256": {
+          "key": "medicalConditionDetails",
+          "label": "Beskriv din sjukdom och hur den påverkar dig"
+        }
+      },
+      "Psykisk hälsa": {
+        "93265": {
+          "key": "cognitiveDiagnoses",
+          "label": "Har du någon form av diagnos eller kognitiv funktionsnedsättning? Exempelvis"
+        },
+        "93267": {
+          "key": "hasPhobia",
+          "label": "Har du någon fobi som begränsar dig i din vardag?"
+        },
+        "93269": {
+          "key": "hasMentalHealthCondition",
+          "label": "Har du eller utreds du för (pågående) ångestproblematik, diagnostiserad ätstörning, PTSD eller liknande?"
+        },
+        "93266": {
+          "key": "cognitiveDiagnosesDetails",
+          "label": "Berätta hur din funktionsnedsättning eller diganos påverkar dig i din vardag och vilket stöd / anpassning du behöver"
+        },
+        "93270": {
+          "key": "mentalHealthDetails",
+          "label": "Beskriv vad och hur den påverkar dig i din vardag"
+        },
+        "93268": {
+          "key": "phobiaDetails",
+          "label": "Beskriv din fobi och hur den påverkar dig"
+        }
+      },
+      "Övriga frågor": {
+        "93211": {
+          "key": "additionalInfo",
+          "label": "Finns det något vi inte frågat om som du vill att kontingentledningen bör känna till?"
+        }
+      }
+    }
+  },
+  "deltagare_ist": {
+    "Hälsoinformation": {
+      "Diet och födoämnesallergier": {
+        "86889": {
+          "key": "specialDiet",
+          "label": "Har du behov av specialkost?"
+        },
+        "88147": {
+          "key": "foodAllergyLactose",
+          "label": "Laktos"
+        },
+        "88146": {
+          "key": "foodAllergyEgg",
+          "label": "Ägg"
+        },
+        "88150": {
+          "key": "foodAllergyNuts",
+          "label": "Nötter"
+        },
+        "88163": {
+          "key": "hasFoodAllergy",
+          "label": "Har du någon födoämnesrelaterad allergi eller intolerans?"
+        },
+        "88148": {
+          "key": "foodAllergyMilkProtein",
+          "label": "Mjölkprotein"
+        },
+        "88161": {
+          "key": "foodAllergyOther",
+          "label": "Övriga"
+        },
+        "88155": {
+          "key": "foodAllergyGluten",
+          "label": "Gluten"
+        },
+        "88158": {
+          "key": "foodAllergySulphites",
+          "label": "Svaveldioxid och sulfit"
+        },
+        "88156": {
+          "key": "foodAllergyCereals",
+          "label": "Spannmål"
+        },
+        "88157": {
+          "key": "foodAllergySesame",
+          "label": "Sesam"
+        },
+        "88154": {
+          "key": "foodAllergyMustard",
+          "label": "Senap"
+        },
+        "88152": {
+          "key": "foodAllergyShellfish",
+          "label": "Skaldjur"
+        },
+        "88159": {
+          "key": "foodAllergyFruit",
+          "label": "Frukt"
+        },
+        "88151": {
+          "key": "foodAllergyFish",
+          "label": "Fisk"
+        },
+        "88153": {
+          "key": "foodAllergyLegumes",
+          "label": "Baljväxter"
+        },
+        "88160": {
+          "key": "foodAllergyVegetables",
+          "label": "Grönsak"
+        },
+        "88716": {
+          "key": "specialDietDetails",
+          "label": "Beskriv din specialkost i detalj"
+        },
+        "88162": {
+          "key": "foodAllergyDetails",
+          "label": "Beskriv din allergi(er) och samt hur du reagerar vid ett allergiskt anfall"
+        }
+      },
+      "Andra allergier": {
+        "87053": {
+          "key": "hasOtherAllergy",
+          "label": "Har du någon allvarligare allergi som inte är födoämnesrelaterad?"
+        },
+        "88178": {
+          "key": "otherAllergyDetails",
+          "label": "Beskriv din allergi eller allergier, hur allvarligt du reagerar och vilken medicin du behöver ha med dig"
+        }
+      },
+      "Fysisk hälsa": {
+        "87058": {
+          "key": "needsMedicalEquipment",
+          "label": "Har du något behov av medicinsk utrustning?"
+        },
+        "87059": {
+          "key": "medicalEquipmentNeeds",
+          "label": "Vilka behov har du?"
+        },
+        "87060": {
+          "key": "hasPhysicalLimitations",
+          "label": "Har du några fysiska begränsningar?"
+        },
+        "87062": {
+          "key": "mobilityAids",
+          "label": "Har du behov av att använda något av följande hjälpmedel?"
+        },
+        "89840": {
+          "key": "usesPrescriptionMedication",
+          "label": "Använder du några receptbelagda läkemedel?"
+        },
+        "91238": {
+          "key": "hasMedicalCondition",
+          "label": "Har du någon sjukdom såsom epelepsi, diabetes, inflamatorisk tarmsjukdom, hjärtsjukdom eller annat?"
+        },
+        "93253": {
+          "key": "managesOwnMedication",
+          "label": "Kan du själv ta ansvar för din medicinering?"
+        },
+        "93252": {
+          "key": "medicationStorageNeeded",
+          "label": "Behöver denna förvaras på något speciellt sätt?"
+        },
+        "87313": {
+          "key": "medicalEquipmentDetails",
+          "label": "Berätta vad du behöver"
+        },
+        "87063": {
+          "key": "otherMobilityAidsDetails",
+          "label": "Ange de andra hjälpmedel du är i behov av"
+        },
+        "89841": {
+          "key": "medicationStorageDetails",
+          "label": "Hur då?"
+        },
+        "87061": {
+          "key": "physicalLimitationsDetails",
+          "label": "Ange vilka och det behov du har"
+        },
+        "92454": {
+          "key": "medicationDetails",
+          "label": "Vilket eller vilka läkemedel och i vilken dos?"
+        },
+        "91239": {
+          "key": "medicalConditionDetails",
+          "label": "Beskriv din sjukdom och hur den påverkar dig"
+        }
+      },
+      "Förutsättningar": {
+        "87311": {
+          "key": "needsPersonalAssistant",
+          "label": "Har du behov av ta med dig personlig assistent under arrangemanget?"
+        },
+        "88720": {
+          "key": "sensitivityToUnpredictability",
+          "label": "Reagerar du på saker som oregelbundna måltider, information som ändras sent och/eller flera gånger, eller varierande möjligheter tilll egentid?"
+        },
+        "89842": {
+          "key": "needsSupportForUnpredictability",
+          "label": "Har du behov av stöttning för att kunna hantera detta bättre?"
+        },
+        "89888": {
+          "key": "unpredictabilityDetails",
+          "label": "Beskriv hur detta påverkar dig"
+        }
+      },
+      "Vaccinationer": {
+        "88717": {
+          "key": "childhoodVaccinationsComplete",
+          "label": "Är du vaccinerad mot stelkramp och difteri i enlighet med det svenska barnvaccinationsprogrammet?"
+        },
+        "88718": {
+          "key": "diphtheriaBoosterAsAdult",
+          "label": "Har du fyllt på vaccin mot difteri i vuxen ålder?"
+        },
+        "91768": {
+          "key": "tetanusBoosterAsAdult",
+          "label": "Har du fyllt på vaccin mot stelkramp i vuxen ålder?"
+        },
+        "91767": {
+          "key": "diphtheriaBoosterYear",
+          "label": "Vilket år fyllde du på difteri?"
+        },
+        "91766": {
+          "key": "tetanusBoosterYear",
+          "label": "Vilket år fyllde du på stelkramp?"
+        }
+      },
+      "Psykisk hälsa": {
+        "91266": {
+          "key": "hasPhobia",
+          "label": "Har du någon fobi som begränsar dig i din vardag?"
+        },
+        "91268": {
+          "key": "hasMentalHealthCondition",
+          "label": "Har du eller utreds du för (pågående) ångestproblematik, diagnostiserad ätstörning, PTSD eller liknande?"
+        },
+        "91796": {
+          "key": "cognitiveDiagnoses",
+          "label": "Har du någon form av diagnos eller kognitiv funktionsnedsättning? Exempelvis"
+        },
+        "91269": {
+          "key": "mentalHealthDetails",
+          "label": "Beskriv vad och hur den påverkar dig i din vardag"
+        },
+        "91267": {
+          "key": "phobiaDetails",
+          "label": "Beskriv din fobi och hur den påverkar dig"
+        },
+        "87066": {
+          "key": "cognitiveDiagnosesDetails",
+          "label": "Berätta hur din funktionsnedsättning eller diganos påverkar dig i din vardag och vilket stöd / anpassning du behöver"
+        }
+      },
+      "Övriga frågor": {
+        "87312": {
+          "key": "additionalInfoUnitLeader",
+          "label": "Finns det något vi inte frågat om som du vill att avdelningsledare eller kontingentledningen bör känna till?"
+        },
+        "93212": {
+          "key": "additionalInfo",
+          "label": "Finns det något vi inte frågat om som du vill att kontingentledningen bör känna till?"
+        }
+      }
+    },
+    "Grundläggande information": {
+      "Information redan i Scoutnet": {
+        "85099": {
+          "key": "alternateEmail",
+          "label": "Alternativ e-postadress"
+        },
+        "85097": {
+          "key": "email",
+          "label": "Din e-postadress"
+        },
+        "85100": {
+          "key": "mobilePhone",
+          "label": "Ansökandes mobiltelefon"
+        }
+      },
+      "Kontaktuppgifter närstående 1": {
+        "85103": {
+          "key": "nextOfKin1Phone",
+          "label": "Närstående 1 - Mobiltelefon"
+        },
+        "87647": {
+          "key": "nextOfKin1Relation",
+          "label": "Närstående 1 - Relation"
+        },
+        "85102": {
+          "key": "nextOfKin1Email",
+          "label": "Närstående 1 - E-post"
+        },
+        "85101": {
+          "key": "nextOfKin1Name",
+          "label": "Närstående 1 - Namn"
+        }
+      },
+      "Kontaktuppgifter närstående 2": {
+        "85104": {
+          "key": "nextOfKin2Name",
+          "label": "Närstående 2 - Namn"
+        },
+        "85105": {
+          "key": "nextOfKin2Email",
+          "label": "Närstående 2 - E-post"
+        },
+        "85106": {
+          "key": "nextOfKin2Phone",
+          "label": "Närstående 2 - Mobiltelefon"
+        },
+        "88137": {
+          "key": "nextOfKin2Relation",
+          "label": "Närstående 2 - Relation"
+        }
+      }
+    }
+  }
+}
