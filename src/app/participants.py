@@ -12,6 +12,11 @@ own.
     full with either of the health roles below.
 
 Both can be true of one person, and then each rule applies where it applies.
+
+One rule cuts across the levels: a participant who is themselves an
+Avdelningsledare keeps their contact_info and forms_data out of every response
+except to Kontingentledning with health authorisation. A leader reading their
+own troop sees the young people in full and their fellow leaders as names.
 """
 
 import logging
@@ -77,13 +82,33 @@ def _authorize(user: AuthUser, troop: str | None, infolevel: InfoLevel, subject:
         )
 
 
-def _project(participant: dict[str, Any], infolevel: InfoLevel) -> dict[str, Any]:
-    """One participant cut down to `infolevel`, always as a new dict."""
+def _leader_details(user: AuthUser) -> bool:
+    """May this caller see an Avdelningsledare's own contact and health details?
+
+    Only Kontingentledning with health authorisation may, which is precisely the
+    contingent-wide full grant — so ask for it with no troop, leaving the
+    caller's own troop out of it. Being a leader of the troop is what does *not*
+    count here, and passing None is what makes sure it cannot.
+    """
+    return _troop_access(user, None) == FULL_ACCESS
+
+
+def _project(participant: dict[str, Any], infolevel: InfoLevel, leader_details: bool) -> dict[str, Any]:
+    """One participant cut down to `infolevel`, always as a new dict.
+
+    A leader reading their own troop gets the young people in full, but their
+    fellow leaders stripped of contact_info and forms_data — an adult's own
+    details are not troop business. Dropped from the record rather than refused,
+    because a troop listing mixes both kinds and a 403 would take the whole list
+    down over one row.
+    """
     if infolevel == "name":
         return {"member_no": participant["member_no"], "name": participant["name"]}
-    if infolevel == "full":
-        return dict(participant)
-    return {key: value for key, value in participant.items() if key != "forms_data"}
+
+    drop = set() if infolevel == "full" else {"forms_data"}
+    if not leader_details and participant["member_type"] == "Avdelningsledare":
+        drop |= {"contact_info", "forms_data"}
+    return {key: value for key, value in participant.items() if key not in drop}
 
 
 # --- API routes ---
@@ -126,7 +151,8 @@ async def troopinfo(
             detail="Troop not found in project.",
         )
 
-    return [_project(p, infolevel) for p in tinfo]
+    leader_details = _leader_details(user)
+    return [_project(p, infolevel, leader_details) for p in tinfo]
 
 
 @router.get(
@@ -158,4 +184,4 @@ async def individualinfo(
         # the number is not news. Kept as it was, to not move a response shape.
         return {"name": meminfo["name"]}
 
-    return _project(meminfo, infolevel)
+    return _project(meminfo, infolevel, _leader_details(user))

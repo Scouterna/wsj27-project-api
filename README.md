@@ -54,6 +54,14 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
+One rule cuts across the table. A participant who is themselves an
+`Avdelningsledare` has their `contact_info` and `forms_data` withheld from every
+caller except Kontingentledning with health authorisation — so a leader reading
+their own troop sees the young people in full and their fellow leaders without
+those two fields. It applies to the caller's own record too. The fields are
+dropped from the response rather than refused, since a troop listing mixes both
+kinds of participant.
+
 Refusals come in two kinds. A caller with no access to a record gets **404**,
 with the same body a record that does not exist returns, so a refusal cannot be
 used to discover who is in the contingent. A caller who may see the record but

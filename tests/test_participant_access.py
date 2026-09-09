@@ -147,6 +147,7 @@ PARTICIPANTS = {
         "troop": "18",
         "member_type": "Deltagare",
         "email": "ada@example.org",
+        "contact_info": {"Anhörig": "Ada's mum"},
         "forms_data": {"Hälsa": {"Allergier": "Nötter"}},
     },
     1000019: {
@@ -155,7 +156,17 @@ PARTICIPANTS = {
         "troop": "19",
         "member_type": "Deltagare",
         "email": "bo@example.org",
+        "contact_info": {"Anhörig": "Bo's dad"},
         "forms_data": {"Hälsa": {"Allergier": "Inga"}},
+    },
+    1000180: {
+        "member_no": 1000180,
+        "name": "Dag Ledare18",
+        "troop": "18",
+        "member_type": "Avdelningsledare",
+        "email": "dag@example.org",
+        "contact_info": {"Anhörig": "Dag's wife"},
+        "forms_data": {"Hälsa": {"Allergier": "Skaldjur"}},
     },
     1000000: {
         "member_no": 1000000,
@@ -163,6 +174,7 @@ PARTICIPANTS = {
         "troop": "",
         "member_type": "Kontingentledning",
         "email": "cee@example.org",
+        "contact_info": {"Anhörig": "Cee's partner"},
         "forms_data": {"Hälsa": {"Allergier": "Inga"}},
     },
 }
@@ -203,11 +215,14 @@ def client(monkeypatch):
         app.dependency_overrides.clear()
 
 
+def _by_name(response):
+    return {p["name"]: p for p in response.json()}
+
+
 def test_leader_reads_their_own_troop_in_full(client):
     response = client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=full")
     assert response.status_code == 200
-    assert [p["name"] for p in response.json()] == ["Ada Troop18"]
-    assert response.json()[0]["forms_data"]
+    assert _by_name(response)["Ada Troop18"]["forms_data"]
 
 
 @pytest.mark.parametrize("infolevel", ["name", "basic", "full"])
@@ -307,3 +322,89 @@ def test_individual_name_level_needs_basic_access(client):
 def test_individual_basic_does_not_mutate_the_cache(client):
     assert client.as_user(CMT_HEALTH).get("/participants/individual/1000018?infolevel=basic").status_code == 200
     assert client.project.participants[1000018]["forms_data"], "the cached record was mutated"
+
+
+# --- Leaders' own details are not troop business ------------------------------
+
+
+@pytest.mark.parametrize("infolevel", ["basic", "full"])
+def test_a_leader_sees_fellow_leaders_without_contact_or_health_data(client, infolevel):
+    """The young people in full, the other adults in the troop stripped back.
+
+    Both rows come out of the same request, so this is also the case a
+    per-request decision would get wrong: the caller's grant is the same for
+    both, and only the participant's own member_type separates them.
+    """
+    response = client.as_user(LEADER_18).get(f"/participants/troopinfo/18?infolevel={infolevel}")
+    assert response.status_code == 200
+    rows = _by_name(response)
+
+    assert rows["Dag Ledare18"]["member_type"] == "Avdelningsledare"
+    assert "contact_info" not in rows["Dag Ledare18"]
+    assert "forms_data" not in rows["Dag Ledare18"]
+    # Still a real record otherwise — this strips two leaves, it does not hide him.
+    assert rows["Dag Ledare18"]["email"] == "dag@example.org"
+
+    assert rows["Ada Troop18"]["contact_info"]
+    assert ("forms_data" in rows["Ada Troop18"]) is (infolevel == "full")
+
+
+def test_a_leader_reading_a_fellow_leader_individually_is_stripped_too(client):
+    """Not just filtered out of listings — the single-record route strips as well."""
+    response = client.as_user(LEADER_18).get("/participants/individual/1000180?infolevel=full")
+    assert response.status_code == 200
+    assert "contact_info" not in response.json()
+    assert "forms_data" not in response.json()
+
+
+def test_cmt_with_health_does_see_a_leaders_details(client):
+    """The one caller the rule lets through, by both routes."""
+    cmt = client.as_user(CMT_HEALTH)
+    listed = _by_name(cmt.get("/participants/troopinfo/18?infolevel=full"))["Dag Ledare18"]
+    assert listed["contact_info"] and listed["forms_data"]
+
+    single = cmt.get("/participants/individual/1000180?infolevel=full").json()
+    assert single["contact_info"] and single["forms_data"]
+
+
+def test_cmt_without_health_sees_no_leader_contact_details(client):
+    """Basic access to a leader is less than basic access to a participant.
+
+    contact_info rides along with "basic" for everyone else, so this is the row
+    where the rule actually costs a CMT member something they otherwise have.
+    """
+    rows = _by_name(client.as_user(CMT_PROGRAM).get("/participants/troopinfo/18?infolevel=basic"))
+    assert "contact_info" not in rows["Dag Ledare18"]
+    assert rows["Ada Troop18"]["contact_info"]
+
+
+def test_being_a_leader_of_the_troop_does_not_unlock_leader_details(client):
+    """A leader who also holds the health access role still gets nothing extra.
+
+    This is the check that would pass wrongly if the flag were computed from the
+    troop being read rather than from the contingent-wide grant: the caller has
+    FULL over troop 18, and must still not have it over the adults in it.
+    """
+    response = client.as_user(LEADER_18, HEALTH_ACCESS).get("/participants/troopinfo/18?infolevel=full")
+    rows = _by_name(response)
+    assert rows["Ada Troop18"]["forms_data"]  # health role does work, for the young people
+    assert "forms_data" not in rows["Dag Ledare18"]
+    assert "contact_info" not in rows["Dag Ledare18"]
+
+
+def test_a_leaders_own_record_is_stripped_like_any_other_leaders(client):
+    """No self-exception: "who is asking" is not part of this rule.
+
+    Dag reading himself gets the same stripped record his colleague does. Worth
+    stating because it is the one case where the rule reads oddly — say so here
+    rather than let it look like an oversight.
+    """
+    dag = client.as_user(LEADER_18)  # member_no 1234567 in the fixture, but the rule ignores that
+    response = dag.get("/participants/individual/1000180?infolevel=full")
+    assert "contact_info" not in response.json()
+
+
+def test_a_leaders_name_level_is_unaffected(client):
+    """ "name" never carried either field, so there is nothing for the rule to take."""
+    rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=name"))
+    assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18"}
