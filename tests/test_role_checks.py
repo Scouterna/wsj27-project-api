@@ -156,11 +156,11 @@ def test_health_access_role_round_trips():
 def test_minted_access_role_matches_the_fixture_above():
     """`HEALTH` above is a literal, written by hand, not imported from anywhere.
 
-    roles.py is a leaf that nothing imports, so nothing enforces that this file's
-    copy still matches what it actually mints — except this test. Mint it and
-    compare. If someone renames the access level in the Scoutnet form, or edits
-    the namespace, this fails instead of leaving every other test in this file
-    quietly exercising a role nobody is granted any more.
+    Nothing in this file imports from roles.py, so nothing enforces that this
+    file's copy still matches what it actually mints — except this test. Mint
+    it and compare. If someone renames the access level in the Scoutnet form,
+    or edits the namespace, this fails instead of leaving every other test in
+    this file quietly exercising a role nobody is granted any more.
     """
     from app.roles import roles_for_participant
 

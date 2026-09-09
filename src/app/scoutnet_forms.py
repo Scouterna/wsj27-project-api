@@ -3,6 +3,7 @@ import logging
 from collections import Counter
 from pathlib import Path
 
+from .roles import roles_for_participant
 from .scoutnet import CachedProject, ProjectCache, ScoutnetProjectData
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,13 @@ def scoutnet_forms_decoder(
         # each lookup. See _load_cache_from_disk() for the other half.
         member_no = int(p["member_no"])
 
+        # access_level is only ever an input to the wsj27:access:<level> role,
+        # never read on its own - mint the role here, once, rather than
+        # storing access_level for roles.py to turn into one on every request.
+        roles = roles_for_participant(
+            {"member_type": member_type, "troop": troop, "member_no": member_no, "access_level": access_level}
+        )
+
         partdata = {  # Save som basic data that is quick to filter on
             "name": f"{p['first_name']} {p['last_name']}",
             "member_no": member_no,
@@ -284,7 +292,7 @@ def scoutnet_forms_decoder(
             "mobile": p["contact_info"].get("1") if p["contact_info"] else None,
             "member_type": member_type,
             "participation_type": participation_type,
-            "access_level": access_level,
+            "roles": roles,
             "troop": troop,
             # Basic access: contact details, kept out of the health-gated block.
             "contact_info": contact_info,

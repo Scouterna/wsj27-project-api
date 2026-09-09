@@ -8,17 +8,23 @@ changed who could read health data here. Defining it here also keeps auth-api
 project-agnostic: it caches and serves whatever role map it is given, and knows
 nothing about troops or member types.
 
-Deliberately a leaf. Nothing in this package imports this module — main.py
-mounts the router below, and that is the whole of its surface. Role *checking*
-(has_role/has_any_role/role_suffixes) lives with AuthUser in authenctication.py,
-so that the rules for minting a role can change here without anything else
-needing to be touched. Those checks are format-only — segment comparison, no
-role names — so nothing there needs to track this file. The actual role
-literals a caller depends on (e.g. HEALTH_ROLES in participants.py) are pinned
-against what this module mints by tests/test_participant_access.py.
+Deliberately near-leaf: main.py mounts the router below and calls
+load_cmt_roles() at startup, and the one other caller is
+scoutnet_forms.py, which imports roles_for_participant() to mint each
+participant's roles once at decode time and store them on the participant
+record — rather than every reader of that data recomputing them. Everything
+else, including the /roles endpoint below, only ever reads that stored field
+back. Role *checking* (has_role/has_any_role/role_suffixes) lives with AuthUser
+in authenctication.py, so that the rules for minting a role can change here
+without anything else needing to be touched. Those checks are format-only —
+segment comparison, no role names — so nothing there needs to track this file.
+The actual role literals a caller depends on (e.g. HEALTH_ROLES in
+participants.py) are pinned against what this module mints by
+tests/test_participant_access.py.
 
-The data flows one way: this module reads participant records out of scoutnet.py
-and turns them into roles. It hands nothing back.
+The data flows one way: this module turns participant fields into roles, and
+scoutnet_forms.py is the only place that calls it to do so. It hands nothing
+back.
 """
 
 import csv
@@ -270,6 +276,9 @@ async def participant_roles(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
     pdata = get_single_project()
+    # Roles are minted once, at decode time, by scoutnet_forms.py - read the
+    # stored field rather than recomputing it on every request.
+    #
     # Members with no roles are omitted rather than sent as empty lists: the
     # meaning is identical and it keeps the body to the few hundred people who
     # actually hold a role, out of ~2600 participants.
@@ -279,7 +288,7 @@ async def participant_roles(
     participants = {
         str(member_id): member_roles
         for member_id, info in pdata.participants.items()
-        if (member_roles := roles_for_participant(info))
+        if (member_roles := info.get("roles"))
     }
 
     # Hash the exact body we return, so the ETag cannot drift from the content.
