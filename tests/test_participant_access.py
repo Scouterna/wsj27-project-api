@@ -15,13 +15,13 @@ a caller learning that a record exists by being refused differently, and a
 import pytest
 from fastapi.testclient import TestClient
 
-from app.authenctication import ACCESS_HEALTH_INTERNAL, AuthUser, require_auth_user
+from app.authenctication import AuthUser, require_auth_user
 from app.participants import BASIC_ACCESS, FULL_ACCESS, NO_ACCESS, _troop_access
 
 LEADER_18 = "wsj27:al:18"
 CMT_PROGRAM = "wsj27:cmt:program:medlem"
 CMT_HEALTH = "wsj27:cmt:support:halsa"
-HEALTH_ACCESS = ACCESS_HEALTH_INTERNAL
+HEALTH_ACCESS = "wsj27:access:Hälsa plus intern information"
 
 
 def _user(*roles: str) -> AuthUser:

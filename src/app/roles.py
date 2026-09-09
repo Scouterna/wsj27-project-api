@@ -10,10 +10,12 @@ nothing about troops or member types.
 
 Deliberately a leaf. Nothing in this package imports this module — main.py
 mounts the router below, and that is the whole of its surface. Role *checking*
-lives with AuthUser in authenctication.py, so that the rules for minting a role
-can change here without anything else needing to be touched. The two sides meet
-only at the strings themselves, and tests/test_role_checks.py pins those so the
-minting and checking halves cannot drift apart unnoticed.
+(has_role/has_any_role/role_suffixes) lives with AuthUser in authenctication.py,
+so that the rules for minting a role can change here without anything else
+needing to be touched. Those checks are format-only — segment comparison, no
+role names — so nothing there needs to track this file. The actual role
+literals a caller depends on (e.g. HEALTH_ROLES in participants.py) are pinned
+against what this module mints by tests/test_participant_access.py.
 
 The data flows one way: this module reads participant records out of scoutnet.py
 and turns them into roles. It hands nothing back.

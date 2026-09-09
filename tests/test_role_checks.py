@@ -1,22 +1,26 @@
-"""Prefix matching over the role hierarchy, and the seam it sits on.
+"""Prefix matching over the role hierarchy.
 
 These are authorization decisions, so the interesting cases are the ones where a
 plausible-looking implementation grants too much: string prefixes that are not
 role prefixes, and an empty scope set read as "no restriction".
 
-Roles are minted in `app.roles` and checked in `app.authenctication`, which are
-kept apart on purpose — nothing imports `app.roles`. That split means the role
-strings are written down twice, so the last section here pins the minting side
-against the checking side. Those tests are the reason the split is safe.
+`has_role`/`has_any_role`/`role_suffixes` are format-only: they know nothing
+about which role strings mean what, only how to compare them. `HEALTH` below is
+a fixture for exercising that comparison, not a value anyone else depends on —
+the last section keeps it honest against what `app.roles` actually mints, so a
+change there doesn't leave this file testing a string nobody grants any more.
+The literal role strings production code actually branches on (health access,
+CMT detail roles) live in `app.participants`, and are pinned against minting in
+test_participant_access.py, not here.
 """
 
 import pytest
 
-from app.authenctication import ACCESS_HEALTH_INTERNAL, has_any_role, has_role, role_suffixes
+from app.authenctication import has_any_role, has_role, role_suffixes
 
 CMT_IT = "wsj27:cmt:admin:it"
 LEADER_38 = "wsj27:al:38"
-HEALTH = ACCESS_HEALTH_INTERNAL
+HEALTH = "wsj27:access:Hälsa plus intern information"
 
 
 # --- has_role -----------------------------------------------------------------
@@ -136,7 +140,7 @@ def test_string_prefix_does_not_leak_a_scope():
     assert role_suffixes(["wsj27:alx:38"], "wsj27:al") == set()
 
 
-# --- the real role strings ----------------------------------------------------
+# --- HEALTH as a fixture, checked against what roles.py actually mints --------
 
 
 def test_health_access_role_round_trips():
@@ -149,15 +153,14 @@ def test_health_access_role_round_trips():
     assert not has_role(["wsj27:access:Ingen"], HEALTH)
 
 
-def test_minted_access_role_matches_the_checked_constant():
-    """The seam between roles.py and authenctication.py, asserted.
+def test_minted_access_role_matches_the_fixture_above():
+    """`HEALTH` above is a literal, written by hand, not imported from anywhere.
 
-    `ACCESS_HEALTH_INTERNAL` is written out as a literal in authenctication.py
-    because roles.py is a leaf that nothing imports. That is only safe while the
-    literal matches what roles_for_participant() actually mints — so mint it and
+    roles.py is a leaf that nothing imports, so nothing enforces that this file's
+    copy still matches what it actually mints — except this test. Mint it and
     compare. If someone renames the access level in the Scoutnet form, or edits
-    the namespace, this fails instead of silently locking everyone out of (or
-    into) health data.
+    the namespace, this fails instead of leaving every other test in this file
+    quietly exercising a role nobody is granted any more.
     """
     from app.roles import roles_for_participant
 
@@ -168,8 +171,8 @@ def test_minted_access_role_matches_the_checked_constant():
             "access_level": "Hälsa plus intern information",
         }
     )
-    assert ACCESS_HEALTH_INTERNAL in minted
-    assert has_role(minted, ACCESS_HEALTH_INTERNAL)
+    assert HEALTH in minted
+    assert has_role(minted, HEALTH)
 
 
 def test_minted_roles_are_checkable_by_their_prefixes():

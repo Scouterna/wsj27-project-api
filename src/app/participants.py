@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from .authenctication import ACCESS_HEALTH_INTERNAL, AuthUser, require_auth_user
+from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
 from .scoutnet import get_single_project
 
@@ -39,9 +39,7 @@ REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACC
 # Either one unlocks health data. The first is the Support function's health
 # people, slugified out of the Funktion/Roll CSV ("Hälsa" -> "halsa"); the
 # second is granted per person in the Scoutnet form and cuts across functions.
-# Both are minted in roles.py, which nothing imports — test_participant_access
-# pins these literals against what it actually produces.
-HEALTH_ROLES = frozenset({"wsj27:cmt:support:halsa", ACCESS_HEALTH_INTERNAL})
+HEALTH_ROLES = frozenset({"wsj27:cmt:support:halsa", "wsj27:access:Hälsa plus intern information"})
 
 
 def _troop_access(user: AuthUser, troop: str | None) -> int:
@@ -80,13 +78,7 @@ def _authorize(user: AuthUser, troop: str | None, infolevel: InfoLevel, subject:
 
 
 def _project(participant: dict[str, Any], infolevel: InfoLevel) -> dict[str, Any]:
-    """One participant cut down to `infolevel`, always as a new dict.
-
-    The copy is the point: these are the live cache entries from scoutnet.py,
-    shared by every request. Dropping "forms_data" in place — which this used to
-    do — deleted that participant's health answers for everyone until the next
-    Scoutnet refresh.
-    """
+    """One participant cut down to `infolevel`, always as a new dict."""
     if infolevel == "name":
         return {"member_no": participant["member_no"], "name": participant["name"]}
     if infolevel == "full":

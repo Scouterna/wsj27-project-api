@@ -35,12 +35,6 @@ _jwks_keyset_cache: dict[str, KeySet] = {}
 # imports. The cost is that the role *shape* is now known in two places, which
 # tests/test_role_checks.py pins so the two cannot drift apart silently.
 
-# The access level that unlocks health and other internal participant data.
-# Named rather than spelled out at each call site: it is a Swedish sentence used
-# as an identifier, and a typo in it fails open-endedly rather than loudly. It
-# must match what roles.roles_for_participant() mints for that access level.
-ACCESS_HEALTH_INTERNAL = "wsj27:access:Hälsa plus intern information"
-
 
 def _segments(role: str) -> list[str]:
     return role.split(":")
