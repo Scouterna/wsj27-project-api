@@ -43,6 +43,34 @@ questions in a form that the template omits.
 
 The three small files are safe to hand over; they contain only question text.
 
+## `build_cmt_roles.py`
+
+Builds `cmt-roles.csv` (repo root — what `CMT_ROLES_FILE` points at, see
+`src/app/roles.py`) from two inputs that don't share a key:
+
+- `CMT-listan.csv` (repo root) — Kansliet's roster: name + Funktion/Roll, no
+  member number.
+- `src/.dev_cache/92fa15301e2df7c8.json` — the cached Scoutnet participants
+  response, name + member number.
+
+```bash
+python3 tools/build_cmt_roles.py
+```
+
+Matches by name, which is the risky part — a wrong match hands one person's
+CMT detail role to someone else. A roster row is only ever written
+automatically when exactly one participant matches it: first on a
+whitespace-normalized exact match, falling back to accent/case-folded only if
+that finds nobody. Zero or multiple candidates means the row is left out and
+printed for manual resolution instead of guessed at.
+
+Also flags, without excluding, rows that would currently have no effect: a
+match whose Scoutnet application type isn't Kontingentledning (`roles.py`
+never reaches the CMT branch for them regardless of this file), and a match
+that isn't confirmed or is cancelled (dropped from the app's participant cache
+entirely). Rerun whenever `CMT-listan.csv` changes or the dev cache is
+refreshed — it fully recreates `cmt-roles.csv` rather than updating it.
+
 ## `question_keys.py`
 
 The full question id → short key table for **both** forms, including the fields

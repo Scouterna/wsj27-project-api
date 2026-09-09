@@ -13,8 +13,11 @@ cmt-roles.csv
 src/.dev_cache/
 tools/generated/decoded_participants.json
 
-# CMT roster: names + member numbers. The member_no -> Funktion/Roll mapping the
-# app actually needs lives in k8s/wstest/configmap.yaml, without the names.
+# CMT roster: names, phone numbers and private emails. The member_no ->
+# Funktion/Roll mapping the app actually needs is cmt-roles.csv (already
+# ignored above), built from this by tools/build_cmt_roles.py, without the
+# contact details. CMT-med-medlemsnummer.csv was its predecessor.
+CMT-listan.csv
 CMT-med-medlemsnummer.csv
 
 # Python
