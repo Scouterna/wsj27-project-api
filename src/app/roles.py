@@ -62,9 +62,16 @@ NO_ACCESS_LEVELS = {"ingen", ""}
 # --- CMT detail roles -----------------------------------------------------------
 #
 # CMT members are further split by Funktion (Admin, Program, Support, ...) and
-# Roll (FA, Medlem, Avdelningssupport PL, ...), giving
-# "wsj27:cmt:<funktion>:<roll>". That split is not in Scoutnet, so it comes from
-# a CSV mounted at CMT_ROLES_FILE; see load_cmt_roles().
+# Roll (FA, Medlem, Avdelningssupport, ...), giving "wsj27:cmt:<funktion>:<roll>".
+# That split is not in Scoutnet, so it comes from a CSV mounted at
+# CMT_ROLES_FILE; see load_cmt_roles().
+#
+# A Roll can carry a trailing "PL" (Platsledare - the coordinator within that
+# Roll, e.g. "Hälsa PL"): _drop_pl_suffix() merges it into the plain Roll, so
+# "Hälsa PL" and "Hälsa" mint the same role and get identical access. PL is a
+# coordination title, not (yet) its own authorization scope - if that changes,
+# it belongs as a fifth path segment (wsj27:cmt:<funktion>:<roll>:<pl>), not
+# folded away here.
 #
 # member_no -> (funktion, roll), both already slugified. Populated by
 # load_cmt_roles() at startup; empty until then, and empty is a valid state.
@@ -75,16 +82,26 @@ CSV_MEMBER_NO = "Medlemsnummer"
 CSV_FUNKTION = "Funktion"
 CSV_ROLL = "Roll"
 
+# Matches only a trailing, whitespace-separated "PL" - "Hälsa PL" and
+# "IST-support PL", not "PL Food house", where PL is part of the title itself
+# rather than a suffix on it.
+_ROLL_PL_SUFFIX = re.compile(r"\s+PL\s*$", re.IGNORECASE)
+
+
+def _drop_pl_suffix(roll: str) -> str:
+    """Strip a trailing "PL" qualifier so it mints the same role as the plain Roll."""
+    return _ROLL_PL_SUFFIX.sub("", roll)
+
 
 def _slug(value: str) -> str:
     """Lowercase a Swedish role label into a colon-safe role segment.
 
-    "Avdelningssupport PL" -> "avdelningssupport-pl", "FA/CET" -> "fa-cet".
-    Accents are folded (å/ä/ö -> a/a/o) so that consumers which cannot carry
-    non-ASCII role names — Discord server roles, for one — get the same string
-    everyone else does. Any run of non-alphanumerics becomes a single dash,
-    which also guarantees no segment can smuggle in a colon and fake a deeper
-    role than it has.
+    "Avdelningssupport" -> "avdelningssupport", "FA/CET" -> "fa-cet". Accents
+    are folded (å/ä/ö -> a/a/o) so that consumers which cannot carry non-ASCII
+    role names — Discord server roles, for one — get the same string everyone
+    else does. Any run of non-alphanumerics becomes a single dash, which also
+    guarantees no segment can smuggle in a colon and fake a deeper role than it
+    has.
     """
     folded = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
     return re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
@@ -129,7 +146,7 @@ def load_cmt_roles(path: Path | None = None) -> int:
             logger.warning("CMT roles: %r is not a member number; skipping row", raw_member_no)
             continue
         funktion = _slug(row.get(CSV_FUNKTION) or "")
-        roll = _slug(row.get(CSV_ROLL) or "")
+        roll = _slug(_drop_pl_suffix(row.get(CSV_ROLL) or ""))
         if not funktion:
             logger.warning("CMT roles: member %s has no %s; skipping", member_no, CSV_FUNKTION)
             continue
@@ -165,9 +182,10 @@ def roles_for_participant(info: dict[str, Any]) -> list[str]:
       * `Avdelningsledare` gets `wsj27:al:<troop>` — the troop is part of
         the role because a leader's authority is scoped to their own troop.
       * `Kontingentledning` gets `wsj27:cmt:<funktion>:<roll>`, e.g.
-        `wsj27:cmt:support:avdelningssupport-pl`. Funktion and Roll come from
-        the CSV at CMT_ROLES_FILE, not from Scoutnet; a member missing from it
-        falls back to plain `wsj27:cmt`.
+        `wsj27:cmt:support:avdelningssupport`. Funktion and Roll come from the
+        CSV at CMT_ROLES_FILE, not from Scoutnet; a member missing from it
+        falls back to plain `wsj27:cmt`. A trailing "PL" on Roll is dropped
+        (see _drop_pl_suffix), so "Hälsa PL" and "Hälsa" mint the same role.
       * `access_level` becomes `wsj27:access:<level>` unless it is "Ingen" or
         blank, so the absence of access is expressed by the absence of a role
         rather than by a role meaning "nothing".

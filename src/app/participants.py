@@ -42,8 +42,10 @@ NO_ACCESS, BASIC_ACCESS, FULL_ACCESS = 0, 1, 2
 REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACCESS}
 
 # Either one unlocks health data. The first is the Support function's health
-# people, slugified out of the Funktion/Roll CSV ("Hälsa" -> "halsa"); the
-# second is granted per person in the Scoutnet form and cuts across functions.
+# people, slugified out of the Funktion/Roll CSV ("Hälsa" -> "halsa") - this
+# also covers "Hälsa PL", since roles.py drops that suffix and mints the same
+# role for both. The second is granted per person in the Scoutnet form and cuts
+# across functions.
 HEALTH_ROLES = frozenset({"wsj27:cmt:support:halsa", "wsj27:access:Hälsa plus intern information"})
 
 
