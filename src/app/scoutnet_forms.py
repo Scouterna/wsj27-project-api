@@ -206,6 +206,29 @@ def scoutnet_forms_decoder(
         "73868": "Hälsa plus intern information",
         "73660": "Avdelningsledare",
     }
+    # Which question holds the travel package, per applicant type: Deltagandetyp,
+    # Funktionärstyp and "Med rundresa eller direktresa" all ask the same thing
+    # of different people. Read the one belonging to the member's own type - a
+    # member who changed type mid-application leaves a stale answer behind on
+    # the question they abandoned, and one member in the data has exactly that.
+    participation_question_map = {
+        "Deltagare": "84941",
+        "IST": "85095",
+        "Avdelningsledare": "93357",
+        "Kontingentledning": "93357",
+    }
+    # Normalised, because this block is for filtering and the three questions
+    # word their options differently ("Deltagare med rundresa" vs "Med rundresa
+    # (under 26 år)" vs "Med rundresa"). The IST option's "under 26 år" is a
+    # condition on who may pick it, not part of the answer; age is in `born`.
+    participation_type_map = {
+        "57995": "Rundresa",  # Deltagare med rundresa
+        "57996": "Direktresa",  # Deltagare med direktresa
+        "58084": "Rundresa",  # IST, med rundresa (under 26 år)
+        "58082": "Egen resa",  # IST, med egen resa
+        "64032": "Rundresa",  # Ledare, med rundresa
+        "64033": "Direktresa",  # Ledare, med direktresa
+    }
 
     participants = {}
 
@@ -227,6 +250,13 @@ def scoutnet_forms_decoder(
         if not (member_type := application_type_map.get(application_type, "")):
             logger.error("Application type %s not found in map", application_type)
         troop = p["questions"].get("107592") or p["questions"].get("88168") or ""
+
+        # Left empty when unanswered, which is normal: Kontingentledning are not
+        # asked for a travel package at all (all 59 of them in the 2026-09 data).
+        participation_answer = p["questions"].get(participation_question_map.get(member_type, ""))
+        participation_type = participation_type_map.get(participation_answer, "") if participation_answer else ""
+        if participation_answer and not participation_type:
+            logger.error("Participation type %s not found in map (member %s)", participation_answer, p["member_no"])
 
         forms_data, contact_info = _split_contact(_build_forms_data(p["questions"], qdefs, templates, unmapped))
         # `or`, not a .get() default: Scoutnet stores this key with a null
@@ -253,6 +283,7 @@ def scoutnet_forms_decoder(
             "email": p["primary_email"],
             "mobile": p["contact_info"].get("1") if p["contact_info"] else None,
             "member_type": member_type,
+            "participation_type": participation_type,
             "access_level": access_level,
             "troop": troop,
             # Basic access: contact details, kept out of the health-gated block.
