@@ -398,7 +398,9 @@ export interface Participant {{
   email: string | null;
   mobile: string | null;
   member_type: MemberType;
-  access_level: string;
+  /** WSJ27 roles minted for this member, e.g. "wsj27:al:38". Omitted roles
+   *  mean no permissions, not an error - most participants have none. */
+  roles: string[];
   troop: string;
   /** Next of kin and the contact details the member confirmed in the form.
    *  Note these are a snapshot from application time; `email` and `mobile`
