@@ -205,6 +205,12 @@ async def require_auth_user(request: Request) -> AuthUser:
     token = _extract_token(request)
     if not token:
         if not settings.AUTH_DISABLED:
+            # Logged, because "no token at all" and "a token we rejected" are the same
+            # 401 to the caller but completely different faults, and only the latter
+            # reaches the warning in decode_access_token(). A burst of these means the
+            # auth cookie lapsed before the browser renewed it -- an expiry race in the
+            # front end, not a bad token -- and without this line the logs cannot say so.
+            logger.info("No token presented for %s %s", request.method, request.url.path)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
         else:  # Authentication disabled. Return a fake user, configurable via env vars.
             _, _, member_no = settings.FAKE_USER_PREFERRED_USERNAME.partition("|")
