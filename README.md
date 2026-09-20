@@ -54,13 +54,20 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
-One rule cuts across the table. A participant who is themselves an
-`Avdelningsledare` has their `contact_info` and `forms_data` withheld from every
-caller except Kontingentledning with health authorisation — so a leader reading
-their own troop sees the young people in full and their fellow leaders without
-those two fields. It applies to the caller's own record too. The fields are
-dropped from the response rather than refused, since a troop listing mixes both
-kinds of participant.
+Two rules cut across the table, both about adults' own records, and both drop
+fields from the response rather than refusing it — a listing mixes both kinds of
+participant, and a 403 would take the whole list down over one row. Neither has
+an exception for the caller's own record.
+
+- A participant who is themselves an `Avdelningsledare` has their `contact_info`
+  and `forms_data` withheld from every caller except Kontingentledning with
+  health authorisation. So a leader reading their own troop sees the young
+  people in full and their fellow leaders without those two fields.
+- A participant who is `Kontingentledning` has their `forms_data` withheld from
+  everyone but holders of `wsj27:access:Hälsa plus intern information`. The
+  Support function's `wsj27:cmt:support:halsa` is deliberately not enough here:
+  it covers the contingent's health work, not the contingent leadership's own
+  answers.
 
 Refusals come in two kinds. A caller with no access to a record gets **404**,
 with the same body a record that does not exist returns, so a refusal cannot be

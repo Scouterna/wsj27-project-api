@@ -13,10 +13,12 @@ own.
 
 Both can be true of one person, and then each rule applies where it applies.
 
-One rule cuts across the levels: a participant who is themselves an
-Avdelningsledare keeps their contact_info and forms_data out of every response
-except to Kontingentledning with health authorisation. A leader reading their
-own troop sees the young people in full and their fellow leaders as names.
+Two rules cut across the levels, both about adults' own records. A participant
+who is themselves an Avdelningsledare keeps their contact_info and forms_data
+out of every response except to Kontingentledning with health authorisation — a
+leader reading their own troop sees the young people in full and their fellow
+leaders as names. And a participant who is Kontingentledning keeps their
+forms_data for holders of `wsj27:access:Hälsa plus intern information` alone.
 """
 
 import logging
@@ -45,8 +47,11 @@ REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACC
 # people, slugified out of the Funktion/Roll CSV ("Hälsa" -> "halsa") - this
 # also covers "Hälsa PL", since roles.py drops that suffix and mints the same
 # role for both. The second is granted per person in the Scoutnet form and cuts
-# across functions.
-HEALTH_ROLES = frozenset({"wsj27:cmt:support:halsa", "wsj27:access:Hälsa plus intern information"})
+# across functions; it is also the only one that reaches Kontingentledning's own
+# health answers, so it is named on its own as well.
+CMT_HEALTH_ROLE = "wsj27:cmt:support:halsa"
+INTERNAL_INFO_ROLE = "wsj27:access:Hälsa plus intern information"
+HEALTH_ROLES = frozenset({CMT_HEALTH_ROLE, INTERNAL_INFO_ROLE})
 
 
 def _troop_access(user: AuthUser, troop: str | None) -> int:
@@ -84,32 +89,46 @@ def _authorize(user: AuthUser, troop: str | None, infolevel: InfoLevel, subject:
         )
 
 
-def _leader_details(user: AuthUser) -> bool:
-    """May this caller see an Avdelningsledare's own contact and health details?
+def _withheld(user: AuthUser) -> dict[str, set[str]]:
+    """Fields this caller does not get, keyed by the *participant's* member_type.
 
-    Only Kontingentledning with health authorisation may, which is precisely the
-    contingent-wide full grant — so ask for it with no troop, leaving the
-    caller's own troop out of it. Being a leader of the troop is what does *not*
-    count here, and passing None is what makes sure it cannot.
+    Both entries are about who the participant is rather than which troop they
+    are in, so the caller's side is answered once per request and applied row by
+    row.
+
+      * An Avdelningsledare's contact_info and forms_data are for
+        Kontingentledning with health authorisation only, which is precisely the
+        contingent-wide full grant — so ask for it with no troop, leaving the
+        caller's own troop out of it. Being a leader of the troop is what does
+        *not* count here, and passing None is what makes sure it cannot.
+      * Kontingentledning's own forms_data needs the per-person grant from the
+        Scoutnet form. The Support function's health role is deliberately not
+        enough: it covers the contingent's health work, not the contingent
+        leadership's own answers.
     """
-    return _troop_access(user, None) == FULL_ACCESS
+    withheld: dict[str, set[str]] = {}
+    if _troop_access(user, None) != FULL_ACCESS:
+        withheld["Avdelningsledare"] = {"contact_info", "forms_data"}
+    if not user.has_role(INTERNAL_INFO_ROLE):
+        withheld["Kontingentledning"] = {"forms_data"}
+    return withheld
 
 
-def _project(participant: dict[str, Any], infolevel: InfoLevel, leader_details: bool) -> dict[str, Any]:
+def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[str, set[str]]) -> dict[str, Any]:
     """One participant cut down to `infolevel`, always as a new dict.
 
-    A leader reading their own troop gets the young people in full, but their
-    fellow leaders stripped of contact_info and forms_data — an adult's own
-    details are not troop business. Dropped from the record rather than refused,
-    because a troop listing mixes both kinds and a 403 would take the whole list
-    down over one row.
+    Adults' own details are cut further than the level asked for: a leader
+    reading their own troop gets the young people in full but their fellow
+    leaders stripped of contact_info and forms_data, and Kontingentledning's
+    health answers go only to the internal-information role. Dropped from the
+    record rather than refused, because a listing mixes both kinds of
+    participant and a 403 would take the whole list down over one row.
     """
     if infolevel == "name":
         return {"member_no": participant["member_no"], "name": participant["name"]}
 
     drop = set() if infolevel == "full" else {"forms_data"}
-    if not leader_details and participant["member_type"] == "Avdelningsledare":
-        drop |= {"contact_info", "forms_data"}
+    drop |= withheld.get(participant["member_type"], set())
     return {key: value for key, value in participant.items() if key not in drop}
 
 
@@ -153,8 +172,8 @@ async def troopinfo(
             detail="Troop not found in project.",
         )
 
-    leader_details = _leader_details(user)
-    return [_project(p, infolevel, leader_details) for p in tinfo]
+    withheld = _withheld(user)
+    return [_project(p, infolevel, withheld) for p in tinfo]
 
 
 @router.get(
@@ -186,4 +205,4 @@ async def individualinfo(
         # the number is not news. Kept as it was, to not move a response shape.
         return {"name": meminfo["name"]}
 
-    return _project(meminfo, infolevel, _leader_details(user))
+    return _project(meminfo, infolevel, _withheld(user))

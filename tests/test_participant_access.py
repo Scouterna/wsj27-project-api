@@ -408,3 +408,50 @@ def test_a_leaders_name_level_is_unaffected(client):
     """ "name" never carried either field, so there is nothing for the rule to take."""
     rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=name"))
     assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18"}
+
+
+# --- Kontingentledning's own health answers -----------------------------------
+#
+# A narrower rule than the leaders' one above: it drops forms_data only, and the
+# one role that unlocks it is the per-person grant from the Scoutnet form. The
+# Support function's health role passes every other health check in this file
+# and must not pass this one.
+
+
+@pytest.mark.parametrize("infolevel", ["basic", "full"])
+def test_cmt_health_answers_are_withheld_from_the_support_health_role(client, infolevel):
+    response = client.as_user(CMT_HEALTH).get(f"/participants/troopinfo/cmt?infolevel={infolevel}")
+    assert response.status_code == 200
+    row = _by_name(response)["Cee Cmt"]
+    assert "forms_data" not in row
+    # Only that one field: the rest of the record is as full as the level allows.
+    assert row["contact_info"] and row["email"] == "cee@example.org"
+
+
+def test_cmt_health_answers_reach_the_internal_information_role(client):
+    response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/cmt?infolevel=full")
+    assert response.status_code == 200
+    assert _by_name(response)["Cee Cmt"]["forms_data"]
+
+
+def test_individual_withholds_cmt_health_answers_too(client):
+    """Silently — a 200 with the field gone, not a 403, as for a leader's record."""
+    withheld = client.as_user(CMT_HEALTH).get("/participants/individual/1000000?infolevel=full")
+    assert withheld.status_code == 200
+    assert "forms_data" not in withheld.json()
+
+    allowed = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/individual/1000000?infolevel=full")
+    assert allowed.json()["forms_data"]
+
+
+def test_withholding_cmt_health_answers_does_not_mutate_the_cache(client):
+    assert client.as_user(CMT_HEALTH).get("/participants/individual/1000000?infolevel=full").status_code == 200
+    assert client.project.participants[1000000]["forms_data"], "the cached record was mutated"
+
+
+def test_the_cmt_rule_leaves_everyone_elses_health_answers_alone(client):
+    """It is keyed on the participant's member_type, not on the caller's roles."""
+    response = client.as_user(CMT_HEALTH).get("/participants/troopinfo/18?infolevel=full")
+    rows = _by_name(response)
+    assert rows["Ada Troop18"]["forms_data"]
+    assert rows["Dag Ledare18"]["forms_data"]  # an Avdelningsledare, unlocked by the health role
