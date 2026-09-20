@@ -18,7 +18,9 @@ who is themselves an Avdelningsledare keeps their contact_info and forms_data
 out of every response except to Kontingentledning with health authorisation — a
 leader reading their own troop sees the young people in full and their fellow
 leaders as names. And a participant who is Kontingentledning keeps their
-forms_data for holders of `wsj27:access:Hälsa plus intern information` alone.
+forms_data for holders of `wsj27:access:Hälsa plus intern information` alone —
+though as of 2026-09-20 it is temporarily withheld from every caller, see
+`_withheld()`.
 """
 
 import logging
@@ -102,15 +104,25 @@ def _withheld(user: AuthUser) -> dict[str, set[str]]:
         caller's own troop out of it. Being a leader of the troop is what does
         *not* count here, and passing None is what makes sure it cannot.
       * Kontingentledning's own forms_data needs the per-person grant from the
-        Scoutnet form. The Support function's health role is deliberately not
-        enough: it covers the contingent's health work, not the contingent
-        leadership's own answers.
+        Scoutnet form — `INTERNAL_INFO_ROLE`. The Support function's health role
+        is deliberately not enough: it covers the contingent's health work, not
+        the contingent leadership's own answers. **Withheld from everyone for
+        now**, see below.
     """
     withheld: dict[str, set[str]] = {}
     if _troop_access(user, None) != FULL_ACCESS:
         withheld["Avdelningsledare"] = {"contact_info", "forms_data"}
-    if not user.has_role(INTERNAL_INFO_ROLE):
-        withheld["Kontingentledning"] = {"forms_data"}
+
+    # TEMPORARY (2026-09-20): nobody reads Kontingentledning's own health
+    # answers, not even INTERNAL_INFO_ROLE. To restore the permanent rule, put
+    # `if not user.has_role(INTERNAL_INFO_ROLE):` back in front of the line
+    # below; the suite then names the three test changes that go with it (drop
+    # the xfail marker, and drop HEALTH_ACCESS from CMT_HEALTH_CALLERS).
+    #
+    # Deliberately *only* this line: INTERNAL_INFO_ROLE is also half of
+    # HEALTH_ROLES, so disabling the role itself would revoke `infolevel=full`
+    # contingent-wide for everyone who has no other health grant.
+    withheld["Kontingentledning"] = {"forms_data"}
     return withheld
 
 

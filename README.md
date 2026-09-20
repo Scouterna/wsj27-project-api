@@ -67,7 +67,9 @@ an exception for the caller's own record.
   everyone but holders of `wsj27:access:Hälsa plus intern information`. The
   Support function's `wsj27:cmt:support:halsa` is deliberately not enough here:
   it covers the contingent's health work, not the contingent leadership's own
-  answers.
+  answers. **Temporarily, as of 2026-09-20, this field is withheld from every
+  caller including that role** — see the comment in `_withheld()` for how to
+  restore the rule.
 
 Refusals come in two kinds. A caller with no access to a record gets **404**,
 with the same body a record that does not exist returns, so a refusal cannot be
