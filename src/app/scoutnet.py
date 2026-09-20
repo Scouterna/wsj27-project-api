@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 PROJECT_API = "https://www.scoutnet.se/api/project/get"
+REFRESH_RETRY_MIN = 60  # Seconds to wait after the first failed refresh
+REFRESH_RETRY_MAX = 1800  # Ceiling for the doubling retry delay
 CACHE_DIR = Path(".dev_cache")
 CACHE_FILE = settings.PERSIST_DIR / "project_cache.json"
 
@@ -80,7 +82,7 @@ class ProjectCache:
 # --- Globals ---
 
 _project_cache = ProjectCache()  # Project cache
-_refresh_task: asyncio.Task | None = None  # Nightly cache refresh task
+_refresh_task: asyncio.Task | None = None  # Scheduled cache refresh task
 
 
 # --- Disk cache persistence ---
@@ -129,21 +131,41 @@ def _load_cache_from_disk(path: Path) -> bool:
 # --- Init / shutdown ---
 
 
+def _next_refresh(now: datetime) -> datetime:
+    """First refresh time after `now`, on the configured cadence.
+
+    Runs are spaced out from 03:00 Europe/Stockholm, so the cadence divides the
+    day the way one would expect: 24 h gives the old nightly 03:00 run, 1 h
+    gives every hour on the hour, 6 h gives 03:00, 09:00, 15:00 and 21:00.
+    """
+    interval = timedelta(hours=settings.SCOUTNET_REFRESH_INTERVAL_HOURS)
+    # Start a day back so the anchor itself can't make us skip earlier slots.
+    next_run = now.replace(hour=3, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    while next_run <= now:
+        next_run += interval
+    return next_run
+
+
 async def _scheduled_cache_refresh() -> None:
+    logger.info("Scheduling cache refresh every %d h", settings.SCOUTNET_REFRESH_INTERVAL_HOURS)
     while True:
         now = datetime.now(tz=ZoneInfo("Europe/Stockholm"))
-        next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
-        if next_run <= now:
-            next_run += timedelta(days=1)
-        await asyncio.sleep((next_run - now).total_seconds())
+        await asyncio.sleep((_next_refresh(now) - now).total_seconds())
         logger.info("Running scheduled cache refresh")
-        while True:  # Retry loop: keep retrying every hour until successful
+        # Retry until successful, backing off from a minute to half an hour. A
+        # blip should cost us a minute, not a whole refresh interval, but
+        # Scoutnet is also down (or broken) for hours at a time, and there is no
+        # point hammering it once it clearly isn't coming straight back. The
+        # cache keeps serving the previous fetch throughout.
+        delay = REFRESH_RETRY_MIN
+        while True:
             try:
                 await _update_project_cache()
                 break
             except Exception:
-                logger.error("Cache refresh failed, will retry in 1 hour")
-                await asyncio.sleep(3600)
+                logger.error("Cache refresh failed, retrying in %d s", delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, REFRESH_RETRY_MAX)
 
 
 async def scoutnet_init() -> None:

@@ -7,7 +7,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # to fetch fresh data. Never set this in a deployment — it would freeze the
     # app on whatever data happened to be cached first.
     SCOUTNET_DEV_CACHE: bool = False
+    # How often the background task refreshes the Scoutnet cache, in hours,
+    # counted from 03:00 Europe/Stockholm. Hourly while the Scoutnet data is
+    # still churning; set it back to 24 for a single nightly run once it has
+    # settled down (autumn 2026).
+    SCOUTNET_REFRESH_INTERVAL_HOURS: int = Field(default=1, ge=1, le=24)
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
     # --- CMT detail roles ---
     # CSV mapping member number -> CMT function and role, mounted from a
