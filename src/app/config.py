@@ -70,6 +70,8 @@ class Settings(BaseSettings):
     OIDC_SERVER_PATH: str = ""  # Default is to get the path from the request
     # Drop the Secure attribute so cookies work over plain HTTP locally.
     INSECURE_COOKIES: bool = False
+    # --- Metrics ---
+    ACTIVE_USER_TIMEOUT_SECONDS: int = 600
 
 
 @lru_cache(maxsize=1)

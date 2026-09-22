@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 
+from .active_users import shutdown as active_users_shutdown
 from .case import db_init_tables
 from .case import router as case_router
 
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
         yield  # FastAPI runs here!
     finally:
         await scoutnet_shutdown()
+        await active_users_shutdown()
         await close_db_connection()
 
 

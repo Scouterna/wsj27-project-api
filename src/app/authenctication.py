@@ -8,6 +8,7 @@ from joserfc import jwt
 from joserfc.jwk import KeySet
 from pydantic import BaseModel, Field
 
+from .active_users import track_user
 from .config import get_settings
 
 settings = get_settings()
@@ -229,7 +230,7 @@ async def require_auth_user(request: Request) -> AuthUser:
     if not any(role.startswith("wsj27:") for role in roles):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No suitable roles")
 
-    return AuthUser(
+    user = AuthUser(
         name=claims.get("name") or "",
         preferred_username=claims.get("preferred_username") or "",
         given_name=claims.get("given_name") or "",
@@ -238,3 +239,5 @@ async def require_auth_user(request: Request) -> AuthUser:
         member_no=claims.get("member_no") or "",
         roles=roles,
     )
+    await track_user(user.preferred_username or user.member_no)
+    return user
