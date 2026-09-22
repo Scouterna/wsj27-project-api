@@ -14,7 +14,9 @@ Currently only one maintainer (Håkan). Two long-lived branches, no PRs or versi
   accumulate, so multiple in-progress features can be tested together. Every
   push to `dev` triggers CI too, publishing `:dev`. The dev k8s environment
   (`wsj27-infra/envs/dev/wsj27-project-api.yaml`) tracks `:dev`.
-- **`feat/...`** — cut from `dev`, merged back into `dev` with a local
+- **`feat/...`** — cut from `main` (not `dev`, so each feature's history
+  stays independent of whatever else is currently in `dev` and can be
+  promoted to prod on its own later), merged into `dev` with a local
   `git merge` (no PR yet) once ready to test alongside whatever else is there.
 - **`hotfix/...`** — cut from `main`, for changes that must reach prod without
   waiting on whatever untested work currently sits in `dev` (e.g. an
@@ -30,7 +32,7 @@ never touches prod.
 
 **Start a feature:**
 ```bash
-git checkout dev && git pull
+git checkout main && git pull
 git checkout -b feat/whatever
 # ...commit...
 ```
@@ -56,6 +58,22 @@ Watch CI (`gh run list` / `gh run watch`), get the new short SHA
 (`git rev-parse --short HEAD`), bump the image tag in
 `wsj27-infra/envs/prod/wsj27-project-api.yaml` to that SHA, apply, and
 `rollout restart` in the `proj-wsj27-prod` namespace.
+
+**Promote a single feature, not everything in dev:**
+If `dev` also has other features that aren't decided yet, don't merge `dev`
+wholesale — merge just that feature's own branch into `main` instead:
+```bash
+git checkout main && git pull
+git merge feat/whatever
+git push origin main
+```
+Then bump prod's SHA pin as above. This only stays clean because the feature
+was branched off `main` (per "Start a feature" above), not off `dev`'s tip —
+if it had been branched off `dev` after other features already landed there,
+its history would include their commits too, and only `git cherry-pick` of
+its individual commits (and only if it doesn't actually depend on their code)
+would separate it out. Keep a feature's branch around until it's been
+promoted, in case you need to do this.
 
 **Hotfix straight to prod, bypassing untested `dev` work:**
 ```bash
