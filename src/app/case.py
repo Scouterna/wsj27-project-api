@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Finite but extendable set of case types; each sets up a basic access level for the
 # case. The type -> access-level mapping itself is not implemented yet.
-CASE_TYPES = ["general", "medical", "safeguarding", "security", "logistics"]
+CASE_TYPES = ["hälsa", "admin", "avdelning"]
 
 
 # --- Database functions ---
