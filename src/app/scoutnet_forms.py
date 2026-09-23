@@ -1,3 +1,4 @@
+import csv
 import json
 import logging
 from collections import Counter
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 # API. Change the output by editing the JSON, not this file.
 # See docs/forms-data-decoder.md.
 TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
+
+# Hand-maintained, one-off export: member_no -> Postort/Land. Not Scoutnet
+# data, so it is joined in here rather than decoded from p["questions"].
+CITY_FILE = Path(__file__).parent / "members_city.csv"
 
 
 # 84942: Typ av ansökan
@@ -71,6 +76,43 @@ def _load_templates(qdefs: dict) -> dict:
                                 entry["key"],
                             )
     return templates
+
+
+def _load_member_cities(path: Path = CITY_FILE) -> dict[int, str]:
+    """Read CITY_FILE into a member_no -> city string map.
+
+    City is Postort; Postnummer is skipped for now, and Land is appended in
+    parentheses when it isn't Sverige, since a bare city name is ambiguous
+    without a country for most of the non-Swedish rows.
+
+    Logs rather than raises: a missing or malformed file must not take the
+    API down, it just means nobody gets a city.
+    """
+    try:
+        with path.open(encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.DictReader(fh))
+    except OSError as exc:
+        logger.warning("Could not read member cities from %s: %s", path, exc)
+        return {}
+
+    cities: dict[int, str] = {}
+    for row in rows:
+        raw_member_no = (row.get("Medlemsnummer") or "").strip()
+        if not raw_member_no:
+            continue
+        try:
+            member_no = int(raw_member_no)
+        except ValueError:
+            logger.warning("Member cities: %r is not a member number; skipping row", raw_member_no)
+            continue
+        city = (row.get("Postort") or "").strip()
+        if not city:
+            continue
+        country = (row.get("Land") or "").strip()
+        if country and country != "Sverige":
+            city = f"{city} ({country})"
+        cities[member_no] = city
+    return cities
 
 
 def _decode_answer(qdef: dict, raw, unmapped: Counter | None = None):
@@ -238,6 +280,7 @@ def scoutnet_forms_decoder(
     labels = project.participants["labels"]
     qdefs = project.questions["questions"]  # qid -> definition, both forms merged
     templates = _load_templates(qdefs)
+    member_cities = _load_member_cities()
     unmapped: Counter = Counter()  # choice answers that match no option, summarised below
     logger.debug("Processing %s participants for project %s", len(pdata), project.project_name)
 
@@ -290,6 +333,7 @@ def scoutnet_forms_decoder(
             ),
             "email": p["primary_email"],
             "mobile": p["contact_info"].get("1") if p["contact_info"] else None,
+            "city": member_cities.get(member_no),
             "member_type": member_type,
             "participation_type": participation_type,
             "roles": roles,
