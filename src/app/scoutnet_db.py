@@ -112,9 +112,22 @@ def stored_for(answers: dict, member_type: str = "") -> dict:
     return decode(raw_answer(answers, member_type))
 
 
+def _participant(member_no: int) -> dict | None:
+    """One member's cached record, or None if there is none - including when the
+    project cache has not been filled yet, which get_single_project() reports by
+    raising. Read paths run on every authenticated request (see the avatar write
+    in authenctication.py) and must stay quiet in both cases."""
+    try:
+        project = get_single_project()
+    except StopIteration:
+        logger.debug("No project cached yet, nothing stored for member %s", member_no)
+        return None
+    return project.participants.get(member_no)
+
+
 def get(member_no: int) -> dict:
     """The stored object for one member, from the cache. {} if unknown."""
-    participant = get_single_project().participants.get(member_no)
+    participant = _participant(member_no)
     return dict(participant.get(FIELD) or {}) if participant else {}
 
 
@@ -126,14 +139,20 @@ def get_value(member_no: int, key: str, default: Any = None) -> Any:
 # --- Write path ---
 
 
-def _differs(member_no: int, values: dict[str, Any]) -> bool:
+def would_change(member_no: int, values: dict[str, Any]) -> bool:
     """Would `values` change anything, judged against the cached copy?
 
+    Synchronous and cheap - a dict lookup - so a caller on a hot path can ask
+    before deciding to await anything at all; `_store_avatar` in
+    authenctication.py does exactly that, on every authenticated request.
+    `ensure_values` asks again under the lock, so this is an optimisation and
+    never the thing that makes a write correct.
+
     False for a member who is not a confirmed participant: there is nowhere to
-    write them, and callers that ask on every request (see `ensure_values`) must
-    not raise once per request for everyone who is not in the project.
+    write them, and callers that ask on every request must not raise once per
+    request for everyone who is not in the project.
     """
-    participant = get_single_project().participants.get(member_no)
+    participant = _participant(member_no)
     if participant is None:
         logger.debug("No participant record for member %s, nothing to store", member_no)
         return False
@@ -152,13 +171,13 @@ async def ensure_values(member_no: int, values: dict[str, Any]) -> bool:
     Returns True if a write was sent. A member with no participant record is a
     quiet False, not an error.
     """
-    if not _differs(member_no, values):
+    if not would_change(member_no, values):
         return False
     async with _LOCK:
         # Checked again under the lock. A burst of concurrent requests carrying
         # the same new value would otherwise all pass the check above before any
         # of them committed, and each send the same write.
-        if not _differs(member_no, values):
+        if not would_change(member_no, values):
             return False
         await _write(member_no, _merged(member_no, values))
         return True
@@ -205,7 +224,10 @@ async def _write(member_no: int, data: dict[str, Any]) -> None:
     The cache is only updated once Scoutnet has committed, so a failed write
     leaves the record reading exactly what Scoutnet still holds.
     """
-    project = get_single_project()
+    try:
+        project = get_single_project()
+    except StopIteration:
+        raise ScoutnetDbError("No project cached yet") from None
     config = next((p for p in settings.SCOUTNET_PROJECTS if p.id == project.project_id), None)
     if config is None or not config.update_key:
         raise ScoutnetDbError(f"Project {project.project_id} has no update_key configured")
@@ -244,10 +266,15 @@ async def _write(member_no: int, data: dict[str, Any]) -> None:
     # before/after pair, logged because this field is written rarely and by
     # hand often enough that the history is worth having.
     entry = (response.json().get("updated_questions") or {}).get(str(member_no), {}).get(question_id)
-    if entry is None:
-        logger.info("%s for member %s unchanged (%d chars)", FIELD, member_no, len(encoded))
-    else:
-        logger.info("%s for member %s %s (%d chars)", FIELD, member_no, entry.get("action"), len(encoded))
+    keys = ", ".join(sorted(data)) or "(empty)"
+    logger.info(
+        "%s for member %s %s: %s (%d chars)",
+        FIELD,
+        member_no,
+        "unchanged" if entry is None else entry.get("action"),
+        keys,
+        len(encoded),
+    )
 
     participant[FIELD] = data
 
