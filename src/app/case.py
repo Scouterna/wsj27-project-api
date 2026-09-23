@@ -191,8 +191,8 @@ router = APIRouter()
     description=(
         "Opens a new case. `about_person_id` may be omitted for a case about a "
         "troop as a whole rather than one person.\n\n"
-        "`troop` is a string and can also hold a function name, e.g., CMT."
-        "The `troop` name/number is however used in searches and in applying"
+        "`troop` is a string and can also hold a function name, e.g., CMT. "
+        "The `troop` name/number is however used in searches and in applying "
         "access control, so some restrictions will be applied in the future."
     ),
     responses={
