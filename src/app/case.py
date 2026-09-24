@@ -5,11 +5,13 @@ it is closed. It is about one person (`about_person_id`) or, if that is left
 out, about a troop as a whole. `type` is drawn from the small, code-extendable
 `CASE_TYPES` list below; it is meant to eventually gate who may access a case,
 but that mapping is not implemented yet — today `type` only constrains what a
-caller may write, via the check in `create_case`. This is deliberately not a
-DB-level CHECK constraint: `CASE_TYPES` is expected to change over time, and
+caller may write, via the check in `create_case`.
+
+Value rules (`type`, `secrecy_level` range) are deliberately enforced here in
+code, not as DB CHECK constraints: the schema is still in flux, and
 `db_init_tables()` only ever runs `CREATE TABLE IF NOT EXISTS`, so a
 constraint baked in at creation time would silently go stale against an
-already-existing table the next time the list changes.
+already-existing table the next time a rule changes.
 
 `secrecy_level` (1-5) and `extra_access` (a list of scoutnet member IDs) exist
 on both cases and notes for the same reason: an access model to build on top
@@ -57,7 +59,7 @@ async def db_init_tables() -> None:
             id                BIGSERIAL    PRIMARY KEY,
             created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
             creator_id        BIGINT       NOT NULL,
-            secrecy_level     SMALLINT     NOT NULL CHECK (secrecy_level BETWEEN 1 AND 5),
+            secrecy_level     SMALLINT     NOT NULL,
             title             TEXT         NOT NULL,
             type              TEXT         NOT NULL,
             about_person_id   BIGINT,
@@ -84,7 +86,7 @@ async def db_init_tables() -> None:
             case_id        BIGINT       NOT NULL REFERENCES cases (id),
             created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
             creator_id     BIGINT       NOT NULL,
-            secrecy_level  SMALLINT     NOT NULL CHECK (secrecy_level BETWEEN 1 AND 5),
+            secrecy_level  SMALLINT     NOT NULL,
             title          TEXT         NOT NULL,
             note           TEXT         NOT NULL,
             extra_access   BIGINT[]     NOT NULL DEFAULT '{}',
