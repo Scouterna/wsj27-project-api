@@ -29,6 +29,8 @@ left as a known gap rather than paid for with a lock across the whole refresh.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 from typing import Any
@@ -62,6 +64,24 @@ FIELD = "scout_db"
 # hitting it means something is being stored here that does not belong.
 MAX_ENCODED_LEN = 16384
 
+# --- Tamper detection ---
+#
+# The field is an ordinary text question, so it is editable in the Scoutnet
+# admin GUI, where it shows up as a wall of JSON that invites a well-meaning
+# hand-edit. Anything this app writes is therefore signed, and a value whose
+# signature does not check out is dropped with an error rather than read back as
+# if we had written it.
+#
+# This is an accident detector, not a security boundary: anyone who can read the
+# key can forge a value. It answers "did something else change this?", which is
+# the question worth asking about a field only this app is supposed to write.
+#
+# Stored shape: {"v": 1, "mac": "<hex>", "d": {...the actual object...}}
+ENVELOPE_VERSION = 1
+_MAC_VERSION_KEY, _MAC_KEY, _DATA_KEY = "v", "mac", "d"
+
+_warned_unsigned = False
+
 _LOCK = asyncio.Lock()
 
 
@@ -72,21 +92,97 @@ class ScoutnetDbError(RuntimeError):
 # --- Read path (called from the forms decoder) ---
 
 
-def decode(raw: Any) -> dict:
-    """One member's stored object, or {} when unset or unreadable.
+def _canonical(data: dict) -> str:
+    """The one encoding of `data` that both signing and writing agree on."""
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
-    Never raises: a member whose field holds something that is not a JSON object
-    must not take a whole cache rebuild down with them.
+
+def _mac(member_no: int, data: dict) -> str:
+    """The signature for one member's object.
+
+    Bound to the member number as well as the contents, so a blob copied from
+    one member's field to another's in the GUI fails to verify rather than
+    arriving as that member's own data.
+    """
+    message = f"{ENVELOPE_VERSION}:{member_no}:{_canonical(data)}".encode()
+    return hmac.new(settings.SCOUTNET_DB_HMAC_KEY.encode(), message, hashlib.sha256).hexdigest()
+
+
+def _encode(member_no: int, data: dict) -> str:
+    """One member's object as the string Scoutnet stores, signed if we have a key.
+
+    Written unsigned when no key is configured, so the field stays readable by
+    both modes: a later key makes older values fail verification loudly rather
+    than silently, which is the right way round for a guard against edits.
+    """
+    envelope = {_MAC_VERSION_KEY: ENVELOPE_VERSION, _DATA_KEY: data}
+    if settings.SCOUTNET_DB_HMAC_KEY:
+        envelope[_MAC_KEY] = _mac(member_no, data)
+    else:
+        _warn_unsigned_once()
+    return json.dumps(envelope, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _warn_unsigned_once() -> None:
+    global _warned_unsigned
+    if not _warned_unsigned:
+        _warned_unsigned = True
+        logger.warning(
+            "SCOUTNET_DB_HMAC_KEY is not set: %s values are neither signed nor verified, "
+            "so a hand-edit in the Scoutnet GUI will be read back as if this app wrote it",
+            FIELD,
+        )
+
+
+def decode(raw: Any, member_no: int) -> dict:
+    """One member's stored object, or {} when unset, unreadable or unverified.
+
+    Never raises: one member's mangled value must not take a whole cache rebuild
+    down with them. Everything that is not a value this app wrote is dropped,
+    and every drop is logged at error - the field is written by this app alone,
+    so anything else in it is an accident someone needs to hear about.
     """
     if not raw:
         return {}
     try:
-        data = json.loads(raw)
+        envelope = json.loads(raw)
     except json.JSONDecodeError, TypeError:
-        logger.error("Unparseable %s value, ignoring: %.80r", FIELD, raw)
+        logger.error("%s for member %s is not JSON, dropping it: %.80r", FIELD, member_no, raw)
         return {}
-    if not isinstance(data, dict):
-        logger.error("%s value is %s, not an object, ignoring", FIELD, type(data).__name__)
+    if not isinstance(envelope, dict):
+        logger.error("%s for member %s is %s, not an object, dropping it", FIELD, member_no, type(envelope).__name__)
+        return {}
+
+    # Two separate questions: is this one of our envelopes at all, and does it
+    # carry a signature? An envelope written while no key was configured has no
+    # mac, and must still unwrap to its payload rather than to itself.
+    data = envelope.get(_DATA_KEY)
+    wrapped = isinstance(data, dict) and _MAC_VERSION_KEY in envelope
+    signed = wrapped and _MAC_KEY in envelope
+
+    if not settings.SCOUTNET_DB_HMAC_KEY:
+        _warn_unsigned_once()
+        # Unverifiable either way, so take the payload at face value - including
+        # a bare object written before this app wrapped what it stored.
+        return data if wrapped else envelope
+
+    if not signed:
+        logger.error(
+            "%s for member %s carries no signature - edited by hand in Scoutnet, or written "
+            "before SCOUTNET_DB_HMAC_KEY was set. Dropping it: %.80r",
+            FIELD,
+            member_no,
+            raw,
+        )
+        return {}
+    if not hmac.compare_digest(str(envelope.get(_MAC_KEY)), _mac(member_no, data)):
+        logger.error(
+            "%s for member %s fails its signature - the value was changed outside this app, "
+            "most likely edited in the Scoutnet GUI. Dropping it: %.80r",
+            FIELD,
+            member_no,
+            raw,
+        )
         return {}
     return data
 
@@ -107,9 +203,9 @@ def raw_answer(answers: dict, member_type: str = "") -> Any:
     return None
 
 
-def stored_for(answers: dict, member_type: str = "") -> dict:
+def stored_for(answers: dict, member_no: int, member_type: str = "") -> dict:
     """One member's stored object, straight from their raw Scoutnet answers."""
-    return decode(raw_answer(answers, member_type))
+    return decode(raw_answer(answers, member_type), member_no)
 
 
 def _participant(member_no: int) -> dict | None:
@@ -239,9 +335,10 @@ async def _write(member_no: int, data: dict[str, Any]) -> None:
     if question_id is None:
         raise ScoutnetDbError(f"Member {member_no} has member_type {participant.get('member_type')!r}, no field for it")
 
-    # An empty object clears the field rather than storing "{}", so a member
-    # with nothing stored looks the same whether this app ever wrote to them.
-    encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True) if data else ""
+    # An empty object clears the field rather than storing an empty envelope, so
+    # a member with nothing stored looks the same whether this app ever wrote to
+    # them. The signature goes in with the data; see "Tamper detection" above.
+    encoded = _encode(member_no, data) if data else ""
     if len(encoded) > MAX_ENCODED_LEN:
         raise ScoutnetDbError(f"{FIELD} for member {member_no} would be {len(encoded)} chars, over {MAX_ENCODED_LEN}")
 

@@ -8,6 +8,8 @@ module docstring for the merge-and-replace semantics.
 """
 
 import asyncio
+import json
+import logging
 
 import pytest
 
@@ -24,11 +26,11 @@ LEADER_ID = scoutnet_db.QUESTION_IDS["Avdelningsledare"]
 )
 def test_decode_returns_empty_dict_for_anything_that_is_not_an_object(raw):
     """A member with a broken value must not take the whole cache rebuild down."""
-    assert scoutnet_db.decode(raw) == {}
+    assert scoutnet_db.decode(raw, 1000000) == {}
 
 
-def test_decode_reads_an_object():
-    assert scoutnet_db.decode('{"patrol": "Falken", "n": 2}') == {"patrol": "Falken", "n": 2}
+def test_decode_reads_an_unsigned_object_when_no_key_is_configured():
+    assert scoutnet_db.decode('{"patrol": "Falken", "n": 2}', 1000000) == {"patrol": "Falken", "n": 2}
 
 
 def test_raw_answer_picks_the_id_belonging_to_the_members_form():
@@ -44,8 +46,8 @@ def test_raw_answer_falls_back_to_either_id_when_member_type_is_unknown():
 
 def test_stored_for_goes_from_raw_answers_to_an_object():
     answers = {PARTICIPANT_ID: '{"patrol": "Falken"}'}
-    assert scoutnet_db.stored_for(answers, "Deltagare") == {"patrol": "Falken"}
-    assert scoutnet_db.stored_for({}, "Deltagare") == {}
+    assert scoutnet_db.stored_for(answers, 1000000, "Deltagare") == {"patrol": "Falken"}
+    assert scoutnet_db.stored_for({}, 1000000, "Deltagare") == {}
 
 
 # --- ensure_values: the guard that keeps per-request callers off Scoutnet ---
@@ -111,3 +113,86 @@ def test_a_burst_of_identical_writes_collapses_to_one(cached, writes):
 
     asyncio.run(burst())
     assert len(writes) == 1
+
+
+# --- Tamper detection ---
+#
+# The field is editable in the Scoutnet admin GUI, so the question these answer
+# is "did something other than this app write this?". Dropping the value is the
+# whole point: a hand-edit must not be read back as if we had produced it.
+
+MEMBER = 3073781
+
+
+@pytest.fixture
+def signed(monkeypatch):
+    """A configured signing key, as a deployment has."""
+    monkeypatch.setattr(scoutnet_db.settings, "SCOUTNET_DB_HMAC_KEY", "a-test-key")
+    monkeypatch.setattr(scoutnet_db, "_warned_unsigned", False)
+
+
+@pytest.fixture
+def unsigned(monkeypatch):
+    """No key, as a local checkout has."""
+    monkeypatch.setattr(scoutnet_db.settings, "SCOUTNET_DB_HMAC_KEY", "")
+    monkeypatch.setattr(scoutnet_db, "_warned_unsigned", False)
+
+
+def test_a_signed_value_survives_the_round_trip(signed):
+    data = {"patrol": "Falken", "avatar_url": "https://x/y", "n": 2}
+    assert scoutnet_db.decode(scoutnet_db._encode(MEMBER, data), MEMBER) == data
+
+
+def test_an_edited_value_is_dropped(signed, caplog):
+    """The case this exists for: someone changed the JSON in the Scoutnet GUI."""
+    raw = scoutnet_db._encode(MEMBER, {"patrol": "Falken"})
+    edited = raw.replace("Falken", "Örnen")
+    assert edited != raw
+
+    with caplog.at_level(logging.ERROR):
+        assert scoutnet_db.decode(edited, MEMBER) == {}
+
+    assert "fails its signature" in caplog.text
+
+
+def test_a_value_copied_to_another_member_is_dropped(signed, caplog):
+    """The signature covers the member number, not just the contents."""
+    raw = scoutnet_db._encode(MEMBER, {"patrol": "Falken"})
+
+    with caplog.at_level(logging.ERROR):
+        assert scoutnet_db.decode(raw, 1000000) == {}
+
+    assert "fails its signature" in caplog.text
+
+
+def test_an_unsigned_value_is_dropped_once_a_key_is_configured(signed, caplog):
+    """Covers both a hand-written object and one stored before the key existed."""
+    with caplog.at_level(logging.ERROR):
+        assert scoutnet_db.decode('{"patrol": "Falken"}', MEMBER) == {}
+
+    assert "carries no signature" in caplog.text
+
+
+def test_a_stray_mac_key_inside_the_data_does_not_forge_a_signature(signed, caplog):
+    """The signature lives on the envelope, so a "mac" among the values is just a value."""
+    with caplog.at_level(logging.ERROR):
+        assert scoutnet_db.decode('{"mac": "deadbeef", "patrol": "Falken"}', MEMBER) == {}
+
+    assert "carries no signature" in caplog.text
+
+
+def test_without_a_key_nothing_is_signed_and_nothing_is_rejected(unsigned, caplog):
+    with caplog.at_level(logging.WARNING):
+        raw = scoutnet_db._encode(MEMBER, {"patrol": "Falken"})
+        assert scoutnet_db.decode(raw, MEMBER) == {"patrol": "Falken"}
+
+    assert "SCOUTNET_DB_HMAC_KEY is not set" in caplog.text
+    assert scoutnet_db._MAC_KEY not in json.loads(raw)
+
+
+def test_the_unsigned_warning_is_logged_once_not_per_member(unsigned, caplog):
+    with caplog.at_level(logging.WARNING):
+        for member_no in range(1000000, 1000010):
+            scoutnet_db.decode('{"patrol": "Falken"}', member_no)
+
+    assert caplog.text.count("SCOUTNET_DB_HMAC_KEY is not set") == 1

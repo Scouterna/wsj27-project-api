@@ -346,7 +346,7 @@ def scoutnet_forms_decoder(
         # Last, so this app's own stored values can add to (and override) what
         # the Scoutnet answers produced — a hand-assigned patrol or role is
         # there precisely because the form data cannot give it.
-        _apply_scout_db(partdata, scoutnet_db.stored_for(p["questions"], member_type))
+        _apply_scout_db(partdata, scoutnet_db.stored_for(p["questions"], member_no, member_type))
         participants[member_no] = partdata
 
     if unmapped:
