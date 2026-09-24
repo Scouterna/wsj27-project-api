@@ -26,6 +26,17 @@ eventually. One race is not covered: a cache refresh that fetched participants
 drop the new value from the cache, though Scoutnet itself keeps it and the next
 refresh brings it back. Refreshes are hourly and writes are rare, so this is
 left as a known gap rather than paid for with a lock across the whole refresh.
+
+**dev and prod share this field.** Both deployments read and write the same
+Scoutnet project, so they write the same question on the same member. Only prod
+has a `SCOUTNET_DB_HMAC_KEY`, which gives the asymmetry we want for *reading* -
+prod rejects what dev wrote, dev accepts what prod wrote - but not isolation:
+a dev write still overwrites prod's value, and prod then drops it. `avatar_url`
+recovers by itself on the member's next authenticated request; a hand-assigned
+patrol or role does not. The real fix is a separate question per environment,
+deliberately deferred (2026-09-24) in favour of watching prod's logs for the
+"carries no signature" error below. Leaving `update_key` out of dev's
+`SCOUTNET_PROJECTS` closes it entirely, at the cost of testing writes in dev.
 """
 
 import asyncio
@@ -167,9 +178,15 @@ def decode(raw: Any, member_no: int) -> dict:
         return data if wrapped else envelope
 
     if not signed:
+        # Most likely the dev deployment: it writes to this same field on this
+        # same member, and without a key of its own it writes unsigned - which
+        # also means it has overwritten whatever was stored here. Separate
+        # fields per environment is the real fix; until then this line is how
+        # we find out it happened.
         logger.error(
-            "%s for member %s carries no signature - edited by hand in Scoutnet, or written "
-            "before SCOUTNET_DB_HMAC_KEY was set. Dropping it: %.80r",
+            "%s for member %s carries no signature, so its previous contents are gone - written by "
+            "an environment with no SCOUTNET_DB_HMAC_KEY (dev shares this field), edited by hand in "
+            "Scoutnet, or written before the key was set. Dropping it: %.80r",
             FIELD,
             member_no,
             raw,
