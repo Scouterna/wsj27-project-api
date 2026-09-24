@@ -21,7 +21,7 @@ from app.participants import BASIC_ACCESS, FULL_ACCESS, NO_ACCESS, _troop_access
 LEADER_18 = "wsj27:al:18"
 CMT_PROGRAM = "wsj27:cmt:program:medlem"
 CMT_HEALTH = "wsj27:cmt:support:halsa"
-HEALTH_ACCESS = "wsj27:access:Hälsa plus intern information"
+HEALTH_ACCESS = "wsj27:legacy-access:Hälsa plus intern information"
 
 
 def _user(*roles: str) -> AuthUser:
@@ -196,10 +196,12 @@ def client(monkeypatch):
     import copy
 
     from app import participants as participants_module
+    from app import roles as roles_module
     from app.main import app
 
     project = _FakeProject(copy.deepcopy(PARTICIPANTS))
     monkeypatch.setattr(participants_module, "get_single_project", lambda: project)
+    monkeypatch.setattr(roles_module, "get_single_project", lambda: project)
 
     test_client = TestClient(app)
 
@@ -479,3 +481,115 @@ def test_the_internal_information_role_keeps_its_other_grants(client):
     response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/18?infolevel=full")
     assert response.status_code == 200  # a 403 here means the role stopped granting "full"
     assert _by_name(response)["Ada Troop18"]["forms_data"]
+
+
+# --- Writing this app's own values -------------------------------------------
+#
+# Two endpoints with their own rules: a patrol belongs to the troop's own
+# leader, a role is Kontingentledning's decision. The role route lives in
+# roles.py but shares the URL prefix, so it is driven from here too.
+
+ACCESS_ROLE = "wsj27:access:Hälsa plus intern information"
+
+
+@pytest.fixture
+def writes(monkeypatch):
+    """Record scoutnet_db writes instead of sending them to Scoutnet."""
+    from app import scoutnet_db
+
+    sent = []
+
+    async def _fake_set_values(member_no, values):
+        sent.append((member_no, values))
+        return {k: v for k, v in values.items() if v is not None}
+
+    monkeypatch.setattr(scoutnet_db, "set_values", _fake_set_values)
+    return sent
+
+
+def test_a_leader_sets_the_patrol_of_their_own_troop(client, writes):
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": "Falken"})
+
+    assert response.status_code == 200
+    assert response.json() == {"patrol": "Falken"}
+    assert writes == [(1000018, {"patrol": "Falken"})]
+
+
+def test_a_leader_cannot_reach_into_another_troop(client, writes):
+    """404, not 403: the refusal must not confirm that member exists."""
+    response = client.as_user(LEADER_18).post("/participants/1000019/patrol", json={"patrol": "Falken"})
+
+    assert response.status_code == 404
+    assert writes == []
+
+
+def test_cmt_may_not_set_a_patrol(client, writes):
+    """A patrol is the troop's own business."""
+    response = client.as_user(CMT_PROGRAM).post("/participants/1000018/patrol", json={"patrol": "Falken"})
+
+    assert response.status_code == 404
+    assert writes == []
+
+
+def test_clearing_a_patrol_removes_the_key(client, writes):
+    client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": ""})
+    assert writes == [(1000018, {"patrol": None})]  # None deletes, per scoutnet_db
+
+
+def test_cmt_sets_roles(client, writes):
+    response = client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": [ACCESS_ROLE]})
+
+    assert response.status_code == 200
+    assert writes == [(1000018, {"roles": [ACCESS_ROLE]})]
+
+
+def test_an_empty_list_clears_the_roles(client, writes):
+    """Removal is "leave it out", since the whole list is sent every time."""
+    client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": []})
+    assert writes == [(1000018, {"roles": None})]
+
+
+@pytest.mark.parametrize("member", [1000018, 1000019], ids=["own-troop", "other-troop"])
+def test_only_cmt_may_set_roles(client, writes, member):
+    response = client.as_user(LEADER_18).post(f"/participants/{member}/role", json={"roles": [ACCESS_ROLE]})
+
+    assert response.status_code == 403
+    assert writes == []
+
+
+@pytest.mark.parametrize(
+    "role",
+    ["wsj27:al:18", "wsj27:cmt:admin", "wsj27:accessx:sneaky", "admin"],
+    ids=["troop-role", "cmt-role", "near-miss-prefix", "junk"],
+)
+def test_roles_outside_the_scoutnet_db_namespace_are_refused(client, writes, role):
+    """Refused where the caller can see it, rather than dropped silently later.
+
+    Only `wsj27:access:` can be taken back by a later write, so granting
+    anything else would make it permanent by accident.
+    """
+    response = client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": [role]})
+
+    assert response.status_code == 422
+    assert writes == []
+
+
+def test_a_write_to_a_member_who_does_not_exist_is_a_404(client, writes):
+    response = client.as_user(CMT_PROGRAM).post("/participants/9999999/role", json={"roles": []})
+
+    assert response.status_code == 404
+    assert writes == []
+
+
+def test_a_scoutnet_failure_is_reported_as_a_bad_gateway(client, monkeypatch):
+    """The fault is upstream, so it must not read as a bug in this API."""
+    from app import scoutnet_db
+
+    async def _boom(member_no, values):
+        raise scoutnet_db.ScoutnetDbError("Scoutnet rejected the write")
+
+    monkeypatch.setattr(scoutnet_db, "set_values", _boom)
+
+    response = client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": []})
+
+    assert response.status_code == 502
