@@ -1,3 +1,36 @@
+"""Case management: cases and the notes attached to them.
+
+A case tracks an issue for the contingent through the notes added to it, until
+it is closed. It is about one person (`about_person_id`) or, if that is left
+out, about a troop as a whole. `type` is drawn from the small, code-extendable
+`CASE_TYPES` list below; it is meant to eventually gate who may access a case,
+but that mapping is not implemented yet — today `type` only constrains what a
+caller may write, via the check in `create_case`.
+
+Value rules (`type`, `secrecy_level` range) are deliberately enforced here in
+code, not as DB CHECK constraints: the schema is still in flux, and
+`db_init_tables()` only ever runs `CREATE TABLE IF NOT EXISTS`, so a
+constraint baked in at creation time would silently go stale against an
+already-existing table the next time a rule changes.
+
+`secrecy_level` (1-5) and `extra_access` (a list of scoutnet member IDs) exist
+on both cases and notes for the same reason: an access model to build on top
+of. Neither is enforced yet either. The one existing rule that touches them is
+in `create_note`: a note's own `secrecy_level` may not be set lower than its
+case's. `require_auth_user` gates every route below on being signed in, but
+nothing here yet limits *which* caller may read or write a given case.
+
+`extra_access` and `tags` are plain array columns directly on `cases` and
+`case_notes` (not normalized lookup tables) — see tags-as-plain-arrays in
+project memory for why. `PUT .../extra_access` and `PUT .../tags` both replace
+the whole list; neither merges with what is already there.
+
+Notes are otherwise immutable once created — there is no endpoint to edit or
+delete one. `GET /{case_id}/notes` logs the read (`case_note_read_log`, one row
+per call, not deduplicated); every other read, including the case listing,
+does not.
+"""
+
 import logging
 from datetime import datetime
 
@@ -21,15 +54,14 @@ CASE_TYPES = ["hälsa", "admin", "avdelning"]
 
 async def db_init_tables() -> None:
     logger.info("Initializing case database tables")
-    case_types_list = ", ".join(f"'{t}'" for t in CASE_TYPES)
-    await db_execute(f"""
+    await db_execute("""
         CREATE TABLE IF NOT EXISTS cases (
             id                BIGSERIAL    PRIMARY KEY,
             created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
             creator_id        BIGINT       NOT NULL,
-            secrecy_level     SMALLINT     NOT NULL CHECK (secrecy_level BETWEEN 1 AND 5),
+            secrecy_level     SMALLINT     NOT NULL,
             title             TEXT         NOT NULL,
-            type              TEXT         NOT NULL CHECK (type IN ({case_types_list})),
+            type              TEXT         NOT NULL,
             about_person_id   BIGINT,
             assigned_to_id    BIGINT,
             troop             TEXT         NOT NULL,
@@ -37,8 +69,8 @@ async def db_init_tables() -> None:
             closed            BOOLEAN      NOT NULL DEFAULT false,
             closed_at         TIMESTAMPTZ,
             closed_by_id      BIGINT,
-            extra_access      BIGINT[]     NOT NULL DEFAULT '{{}}',
-            tags              TEXT[]       NOT NULL DEFAULT '{{}}'
+            extra_access      BIGINT[]     NOT NULL DEFAULT '{}',
+            tags              TEXT[]       NOT NULL DEFAULT '{}'
         )
     """)
     await db_execute("CREATE INDEX IF NOT EXISTS cases_about_person_idx  ON cases (about_person_id)")
@@ -54,7 +86,7 @@ async def db_init_tables() -> None:
             case_id        BIGINT       NOT NULL REFERENCES cases (id),
             created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
             creator_id     BIGINT       NOT NULL,
-            secrecy_level  SMALLINT     NOT NULL CHECK (secrecy_level BETWEEN 1 AND 5),
+            secrecy_level  SMALLINT     NOT NULL,
             title          TEXT         NOT NULL,
             note           TEXT         NOT NULL,
             extra_access   BIGINT[]     NOT NULL DEFAULT '{}',
@@ -83,13 +115,19 @@ async def db_init_tables() -> None:
 
 
 class CaseCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5)
+    secrecy_level: int = Field(ge=1, le=5, description="1 (least secret) to 5 (most secret). Used in access control.")
     title: str
-    type: str
-    about_person_id: int | None = None
-    troop: str
-    extra_access: list[int] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
+    type: str = Field(
+        description="One of the values from `GET /cases/types`. Used as a filer in searches and enforces access control."
+    )
+    about_person_id: int | None = Field(None, description="Member ID. Omit for a case about aq troop.")
+    troop: str = Field(
+        description="Troop number or function name, as a string (e.g. the `<troop>` in the `wsj27:al:<troop>` role)."
+    )
+    extra_access: list[int] = Field(
+        default_factory=list, description="Extra access above the deafult. Add the member IDs."
+    )
+    tags: list[str] = Field(default_factory=list, description="Free-form labels. `GET /cases/tags` lists those in use.")
 
 
 class Case(BaseModel):
@@ -123,10 +161,10 @@ class AssigneeUpdate(BaseModel):
 
 
 class NoteCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5)
+    secrecy_level: int = Field(ge=1, le=5, description="Must be >= the case's own secrecy_level.")
     title: str
     note: str
-    extra_access: list[int] = Field(default_factory=list)
+    extra_access: list[int] = Field(default_factory=list, description="Scoutnet member IDs. Not yet enforced.")
     tags: list[str] = Field(default_factory=list)
 
 
@@ -151,7 +189,18 @@ router = APIRouter()
     "",
     response_model=Case,
     status_code=status.HTTP_201_CREATED,
-    response_description="The created case",
+    summary="Create a case",
+    description=(
+        "Opens a new case. `about_person_id` may be omitted for a case about a "
+        "troop as a whole rather than one person.\n\n"
+        "`troop` is a string and can also hold a function name, e.g., CMT. "
+        "The `troop` name/number is however used in searches and in applying "
+        "access control, so some restrictions will be applied in the future."
+    ),
+    responses={
+        201: {"description": "The created case."},
+        422: {"description": "`type` is not one of the values from `GET /cases/types`."},
+    },
 )
 async def create_case(case: CaseCreate, user: AuthUser = Depends(require_auth_user)):
     if case.type not in CASE_TYPES:
@@ -179,7 +228,13 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(require_auth_us
     "",
     response_model=list[Case],
     status_code=status.HTTP_200_OK,
-    response_description="List of cases, newest first",
+    summary="List cases",
+    description=(
+        "Newest first, filtered by whichever of the query parameters are given. "
+        "`tag` matches cases carrying that exact tag. Closed cases are left out "
+        "unless `include_closed=true`."
+    ),
+    responses={200: {"description": "The matching cases."}},
 )
 async def list_cases(
     about_person_id: int | None = None,
@@ -223,7 +278,13 @@ async def list_cases(
     "/{case_id}/close",
     response_model=Case,
     status_code=status.HTTP_200_OK,
-    response_description="The closed case",
+    summary="Close a case",
+    description="Sets `closed`, `closed_at` and `closed_by_id` (to the caller). Closed cases reject new notes.",
+    responses={
+        200: {"description": "The closed case."},
+        404: {"description": "No case with this id."},
+        409: {"description": "The case is already closed."},
+    },
 )
 async def close_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
     row = await db_fetchrow(
@@ -248,7 +309,13 @@ async def close_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
     "/{case_id}/reopen",
     response_model=Case,
     status_code=status.HTTP_200_OK,
-    response_description="The reopened case",
+    summary="Reopen a case",
+    description="Clears `closed`, `closed_at` and `closed_by_id`.",
+    responses={
+        200: {"description": "The reopened case."},
+        404: {"description": "No case with this id."},
+        409: {"description": "The case is not closed."},
+    },
 )
 async def reopen_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
     row = await db_fetchrow(
@@ -272,7 +339,17 @@ async def reopen_case(case_id: int, user: AuthUser = Depends(require_auth_user))
     "/{case_id}/notes",
     response_model=Note,
     status_code=status.HTTP_201_CREATED,
-    response_description="The created note",
+    summary="Add a note to a case",
+    description=(
+        "Also bumps the case's `latest_note_at`. Rejected if the case is closed, "
+        "or if the note's `secrecy_level` is lower than the case's."
+    ),
+    responses={
+        201: {"description": "The created note."},
+        404: {"description": "No case with this id."},
+        409: {"description": "The case is closed."},
+        422: {"description": "The note's secrecy_level is lower than the case's."},
+    },
 )
 async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(require_auth_user)):
     case_row = await db_fetchrow("SELECT secrecy_level, closed FROM cases WHERE id = $1", case_id)
@@ -313,7 +390,16 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(r
     "/{case_id}/notes",
     response_model=list[Note],
     status_code=status.HTTP_200_OK,
-    response_description="List of notes for the case, newest first",
+    summary="List a case's notes",
+    description=(
+        "Newest first. Unlike other reads in this API, this one is logged — each "
+        "call adds a row to `case_note_read_log` for this case and caller, "
+        "regardless of whether there are new notes to see."
+    ),
+    responses={
+        200: {"description": "The case's notes."},
+        404: {"description": "No case with this id."},
+    },
 )
 async def get_case_notes(case_id: int, user: AuthUser = Depends(require_auth_user)):
     case_row = await db_fetchrow("SELECT id FROM cases WHERE id = $1", case_id)
@@ -333,7 +419,12 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(require_auth_use
     "/{case_id}/extra_access",
     response_model=Case,
     status_code=status.HTTP_200_OK,
-    response_description="The case with its extra_access list replaced",
+    summary="Replace a case's extra_access list",
+    description="Whole-list replace, not a merge — send the complete list of member IDs to grant access.",
+    responses={
+        200: {"description": "The case with its extra_access list replaced."},
+        404: {"description": "No case with this id."},
+    },
 )
 async def update_case_extra_access(
     case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(require_auth_user)
@@ -352,7 +443,12 @@ async def update_case_extra_access(
     "/{case_id}/notes/{note_id}/extra_access",
     response_model=Note,
     status_code=status.HTTP_200_OK,
-    response_description="The note with its extra_access list replaced",
+    summary="Replace a note's extra_access list",
+    description="Whole-list replace, not a merge — send the complete list of member IDs to grant access.",
+    responses={
+        200: {"description": "The note with its extra_access list replaced."},
+        404: {"description": "No note with this id on this case."},
+    },
 )
 async def update_note_extra_access(
     case_id: int, note_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(require_auth_user)
@@ -372,7 +468,12 @@ async def update_note_extra_access(
     "/{case_id}/assignee",
     response_model=Case,
     status_code=status.HTTP_200_OK,
-    response_description="The case with its assignee updated",
+    summary="Set or clear a case's assignee",
+    description="Single assignee. Pass `assigned_to_id: null` to unassign.",
+    responses={
+        200: {"description": "The case with its assignee updated."},
+        404: {"description": "No case with this id."},
+    },
 )
 async def update_case_assignee(case_id: int, update: AssigneeUpdate, user: AuthUser = Depends(require_auth_user)):
     row = await db_fetchrow(
@@ -389,7 +490,12 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, user: AuthU
     "/{case_id}/tags",
     response_model=Case,
     status_code=status.HTTP_200_OK,
-    response_description="The case with its tags replaced",
+    summary="Replace a case's tags",
+    description="Whole-list replace, not a merge — send the complete list of tags the case should carry.",
+    responses={
+        200: {"description": "The case with its tags replaced."},
+        404: {"description": "No case with this id."},
+    },
 )
 async def update_case_tags(case_id: int, update: TagsUpdate, user: AuthUser = Depends(require_auth_user)):
     row = await db_fetchrow(
@@ -406,7 +512,12 @@ async def update_case_tags(case_id: int, update: TagsUpdate, user: AuthUser = De
     "/{case_id}/notes/{note_id}/tags",
     response_model=Note,
     status_code=status.HTTP_200_OK,
-    response_description="The note with its tags replaced",
+    summary="Replace a note's tags",
+    description="Whole-list replace, not a merge — send the complete list of tags the note should carry.",
+    responses={
+        200: {"description": "The note with its tags replaced."},
+        404: {"description": "No note with this id on this case."},
+    },
 )
 async def update_note_tags(case_id: int, note_id: int, update: TagsUpdate, user: AuthUser = Depends(require_auth_user)):
     row = await db_fetchrow(
@@ -424,7 +535,9 @@ async def update_note_tags(case_id: int, note_id: int, update: TagsUpdate, user:
     "/tags",
     response_model=list[str],
     status_code=status.HTTP_200_OK,
-    response_description="All existing tag names",
+    summary="List all tags in use",
+    description="Distinct tag names currently applied to any case or note, alphabetically.",
+    responses={200: {"description": "All existing tag names."}},
 )
 async def list_tags(user: AuthUser = Depends(require_auth_user)):
     rows = await db_fetch("""
@@ -442,7 +555,12 @@ async def list_tags(user: AuthUser = Depends(require_auth_user)):
     "/types",
     response_model=list[str],
     status_code=status.HTTP_200_OK,
-    response_description="All valid case types",
+    summary="List valid case types",
+    description=(
+        "The values `type` may take on `POST /cases`. Each is meant to eventually "
+        "set a case's default access level, but that mapping is not implemented yet."
+    ),
+    responses={200: {"description": "All valid case types."}},
 )
 async def list_case_types(user: AuthUser = Depends(require_auth_user)):
     return CASE_TYPES
