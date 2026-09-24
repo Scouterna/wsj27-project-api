@@ -4,7 +4,8 @@ import logging
 from collections import Counter
 from pathlib import Path
 
-from .roles import roles_for_participant
+from . import scoutnet_db
+from .roles import ROLE_NAMESPACE, roles_for_participant
 from .scoutnet import CachedProject, ProjectCache, ScoutnetProjectData
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,50 @@ def _decode_choice(qdef: dict, value_id, unmapped: Counter | None = None) -> str
 # template still describes these questions like any other, so they keep their
 # keys, labels and order - only their destination differs.
 CONTACT_TABS = {"Grundläggande information"}
+
+# --- The app's own stored values (scoutnet_db) ---
+#
+# scoutnet_db.py keeps a JSON object in a question field of its own, for things
+# Scoutnet's forms cannot tell us: a patrol within a troop, an avatar URL, roles
+# assigned by hand. Storing it is that module's job; what the keys *mean* is
+# decided here, with the rest of the interpretation of Scoutnet data.
+
+# Lifted to the top level of the participant record, so callers reading basic
+# info get them without knowing the field exists. Only copied when non-empty, so
+# a stored blank never blanks out a real value.
+PROMOTED_KEYS = ("patrol", "avatar_url")
+
+# Roles stored in the field are merged into the ones minted from the form
+# answers. Anything outside the `wsj27:` namespace is dropped: a role string is
+# an authorisation decision, and this field is the one part of a participant
+# record that could come to hold arbitrary text.
+STORED_ROLES_KEY = "roles"
+ROLE_PREFIX = f"{ROLE_NAMESPACE}:"
+
+
+def _apply_scout_db(partdata: dict, stored: dict) -> None:
+    """Fold one member's stored object into the record being built, in place.
+
+    Runs after the record is otherwise complete, so a hand-assigned value wins
+    over whatever the form answers produced - which is the point of storing it.
+    """
+    partdata[scoutnet_db.FIELD] = stored
+
+    for key in PROMOTED_KEYS:
+        if stored.get(key):
+            partdata[key] = stored[key]
+
+    extra = stored.get(STORED_ROLES_KEY) or []
+    if not isinstance(extra, list):
+        logger.error("Stored %s for member %s is not a list, ignoring", STORED_ROLES_KEY, partdata.get("member_no"))
+        return
+    known = set(partdata.get(STORED_ROLES_KEY) or [])
+    for role in extra:
+        if not isinstance(role, str) or not role.startswith(ROLE_PREFIX):
+            logger.error("Ignoring malformed stored role %r for member %s", role, partdata.get("member_no"))
+        elif role not in known:
+            partdata.setdefault(STORED_ROLES_KEY, []).append(role)
+            known.add(role)
 
 
 def _split_contact(forms_data: dict) -> tuple[dict, dict]:
@@ -342,6 +387,10 @@ def scoutnet_forms_decoder(
             "contact_info": contact_info,
             "forms_data": forms_data,
         }
+        # Last, so this app's own stored values can add to (and override) what
+        # the Scoutnet answers produced — a hand-assigned patrol or role is
+        # there precisely because the form data cannot give it.
+        _apply_scout_db(partdata, scoutnet_db.stored_for(p["questions"], member_no, member_type))
         participants[member_no] = partdata
 
     if unmapped:

@@ -19,6 +19,9 @@ class ProjectConfig(BaseModel):
     member_key: str
     question_key: str
     group_key: str = ""  # Optional; empty string = no groups for this project
+    # Key for the /api/project/checkin write endpoint (check-in state and
+    # question answers). Optional; empty string = this project is read-only.
+    update_key: str = ""
 
 
 class Settings(BaseSettings):
@@ -38,6 +41,11 @@ class Settings(BaseSettings):
     # still churning; set it back to 24 for a single nightly run once it has
     # settled down (autumn 2026).
     SCOUTNET_REFRESH_INTERVAL_HOURS: int = Field(default=1, ge=1, le=24)
+    # Signs the JSON this app stores in a Scoutnet question field, so a value
+    # edited by hand in the Scoutnet admin GUI is detected and dropped instead
+    # of being read back as if this app had written it. Unset means no signing
+    # and no verification — fine locally, but a deployment should set it.
+    SCOUTNET_DB_HMAC_KEY: str = ""
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
     # --- CMT detail roles ---
     # CSV mapping member number -> CMT function and role, mounted from a
