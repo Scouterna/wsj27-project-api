@@ -20,7 +20,7 @@ from app.authenctication import has_any_role, has_role, role_suffixes
 
 CMT_IT = "wsj27:cmt:admin:it"
 LEADER_38 = "wsj27:al:38"
-HEALTH = "wsj27:access:Hälsa plus intern information"
+HEALTH = "wsj27:legacy-access:Hälsa plus intern information"
 
 
 # --- has_role -----------------------------------------------------------------
@@ -150,7 +150,7 @@ def test_health_access_role_round_trips():
     verbatim, so the checked constant must match that shape exactly.
     """
     assert has_role([HEALTH], HEALTH)
-    assert not has_role(["wsj27:access:Ingen"], HEALTH)
+    assert not has_role(["wsj27:legacy-access:Ingen"], HEALTH)
 
 
 def test_minted_access_role_matches_the_fixture_above():

@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # Roles are matched case-sensitively, and the ones roles.py mints are
     # lowercase, so this default has to be too — "wsj27:CMT:Admin" is not the
     # same role as "wsj27:cmt:admin" and satisfies no check at all. Override to
-    # develop as someone else: add "wsj27:access:Hälsa plus intern information"
+    # develop as someone else: add "wsj27:legacy-access:Hälsa plus intern information"
     # for health data, or use ["wsj27:al:18"] to be an Avdelningsledare.
     FAKE_USER_ROLES: list[str] = ["wsj27:cmt:admin"]
     # --- OIDC server DNS ---

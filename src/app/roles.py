@@ -1,4 +1,4 @@
-"""Minting WSJ27 roles from project membership, and serving them to consumers.
+"""Minting, assigning and serving WSJ27 roles.
 
 This is the single definition of what a WSJ27 role *is*. The strings minted here
 are what wsj27-auth-api puts into the tokens it signs, and what every consumer
@@ -8,23 +8,24 @@ changed who could read health data here. Defining it here also keeps auth-api
 project-agnostic: it caches and serves whatever role map it is given, and knows
 nothing about troops or member types.
 
-Deliberately near-leaf: main.py mounts the router below and calls
-load_cmt_roles() at startup, and the one other caller is
-scoutnet_forms.py, which imports roles_for_participant() to mint each
-participant's roles once at decode time and store them on the participant
-record — rather than every reader of that data recomputing them. Everything
-else, including the /roles endpoint below, only ever reads that stored field
-back. Role *checking* (has_role/has_any_role/role_suffixes) lives with AuthUser
-in authenctication.py, so that the rules for minting a role can change here
-without anything else needing to be touched. Those checks are format-only —
-segment comparison, no role names — so nothing there needs to track this file.
-The actual role literals a caller depends on (e.g. HEALTH_ROLES in
-participants.py) are pinned against what this module mints by
-tests/test_participant_access.py.
+A participant's roles come from two sources, both handled here:
 
-The data flows one way: this module turns participant fields into roles, and
-scoutnet_forms.py is the only place that calls it to do so. It hands nothing
-back.
+  * **Minted** from their Scoutnet form answers by roles_for_participant(),
+    which scoutnet_forms.py calls once per member at decode time.
+  * **Assigned** by hand and kept in scoutnet_db.py's stored object, under the
+    `wsj27:access:` namespace that nothing else mints. POST /{member_id}/role
+    below writes them.
+
+The participant record's `roles` holds only the minted ones. The /roles endpoint
+merges the assigned ones in as it serves, so an assignment reaches it at once.
+
+Role *checking* (has_role/has_any_role/role_suffixes) lives with AuthUser in
+authenctication.py, so that the rules for minting a role can change here without
+anything else needing to be touched. Those checks are format-only — segment
+comparison, no role names — so nothing there needs to track this file. The
+actual role literals a caller depends on (e.g. HEALTH_ROLES in participants.py)
+are pinned against what this module mints by tests/test_participant_access.py.
+
 """
 
 import csv
@@ -37,7 +38,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from pydantic import BaseModel, Field
 
+from . import scoutnet_db
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
 from .scoutnet import get_single_project
@@ -55,7 +58,13 @@ logger = logging.getLogger(__name__)
 ROLE_NAMESPACE = "wsj27"
 ROLE_LEADER = "al"
 ROLE_CMT = "cmt"
+# A personal grant assigned by hand through scoutnet_db, e.g.
+# "wsj27:access:Hälsa plus intern information". See "Assigned roles" below.
 ROLE_ACCESS = "access"
+# The same kind of grant, minted from the Scoutnet form's own access question.
+# Being replaced by ROLE_ACCESS and kept out of its namespace meanwhile, so the
+# two can never be mistaken for each other; removed once the grants have moved.
+ROLE_LEGACY_ACCESS = "legacy-access"
 
 # Only these member types get roles at all.
 MEMBER_TYPE_LEADER = "Avdelningsledare"
@@ -192,9 +201,12 @@ def roles_for_participant(info: dict[str, Any]) -> list[str]:
         CSV at CMT_ROLES_FILE, not from Scoutnet; a member missing from it
         falls back to plain `wsj27:cmt`. A trailing "PL" on Roll is dropped
         (see _drop_pl_suffix), so "Hälsa PL" and "Hälsa" mint the same role.
-      * `access_level` becomes `wsj27:access:<level>` unless it is "Ingen" or
-        blank, so the absence of access is expressed by the absence of a role
-        rather than by a role meaning "nothing".
+      * `access_level` becomes `wsj27:legacy-access:<level>` unless it is
+        "Ingen" or blank, so the absence of access is expressed by the absence
+        of a role rather than by a role meaning "nothing". Named "legacy-"
+        because the plain `wsj27:access:` namespace now belongs to hand-assigned
+        grants, which are replacing this question; see merge_stored_roles().
+        This one goes away once the grants have moved.
 
     Kept as a pure function of one participant record: it is the piece most
     likely to change, and this way it can be reasoned about and tested without
@@ -219,19 +231,73 @@ def roles_for_participant(info: dict[str, Any]) -> list[str]:
 
     access_level = str(info.get("access_level") or "").strip()
     if access_level.lower() not in NO_ACCESS_LEVELS:
-        roles.append(f"{ROLE_NAMESPACE}:{ROLE_ACCESS}:{access_level}")
+        roles.append(f"{ROLE_NAMESPACE}:{ROLE_LEGACY_ACCESS}:{access_level}")
 
     return roles
 
 
-# --- API route ----------------------------------------------------------------
+# --- Assigned roles -------------------------------------------------------------
 #
-# Mounted by main.py under /participants, so the public URL is
-# /participants/roles. It reads as an endpoint about participants, and the path
-# is part of the contract with auth-api and the other mirrors — moving the code
-# in here must not move the URL.
+# Roles assigned by hand live in the participant's scoutnet_db object, as a list
+# under STORED_ROLES_KEY. They are confined to `wsj27:access:`, which nothing
+# else mints, so an assigned role can never pose as a troop or CMT role and it is
+# always clear where a given role came from.
+
+STORED_ROLES_KEY = "roles"
+ASSIGNED_ROLE_PREFIX = (ROLE_NAMESPACE, ROLE_ACCESS)
+
+
+def is_assigned_role(role: str) -> bool:
+    """True if `role` is one that may be assigned by hand, matched segment-wise.
+
+    Never `str.startswith`: "wsj27:accessx:..." is an unrelated role that a
+    string prefix would accept on the way in and strip out on the way back.
+    """
+    return tuple(role.split(":")[: len(ASSIGNED_ROLE_PREFIX)]) == ASSIGNED_ROLE_PREFIX
+
+
+def merge_stored_roles(roles: list[str], stored: Any, member_no: Any = None) -> list[str]:
+    """`roles` plus the assigned roles in `stored`, sorted.
+
+    `stored` is the raw value from the scoutnet_db object, so it is checked
+    rather than trusted: anything malformed is logged and ignored. Sorted because
+    /roles hashes its body for the ETag, and an unstable order would change the
+    tag on every request.
+    """
+    if stored is None:
+        stored = []
+    elif not isinstance(stored, list):
+        logger.error("Stored %s for member %s is not a list, ignoring", STORED_ROLES_KEY, member_no)
+        stored = []
+
+    merged = list(roles)
+    for role in stored:
+        if isinstance(role, str) and is_assigned_role(role):
+            merged.append(role)
+        else:
+            logger.error("Ignoring stored role %r for member %s: not under wsj27:access:", role, member_no)
+    return sorted(set(merged))
+
+
+def _all_roles(member_id: int, info: dict) -> list[str]:
+    """One participant's minted roles plus their hand-assigned ones."""
+    stored = (info.get(scoutnet_db.FIELD) or {}).get(STORED_ROLES_KEY)
+    return merge_stored_roles(info.get("roles") or [], stored, member_id)
+
+
+# --- API routes -----------------------------------------------------------------
+#
+# Mounted by main.py under /participants, so the public URLs are
+# /participants/roles and /participants/{member_id}/role. They read as endpoints
+# about participants, and the paths are part of the contract with auth-api and
+# the other mirrors — moving the code in here must not move the URLs.
 
 router = APIRouter()
+
+
+class RolesUpdate(BaseModel):
+    roles: list[str] = Field(default_factory=list)  # The full list, not a delta
+
 
 # Callers allowed to read the whole role map. wsj27-auth-api needs it to mint
 # tokens; other consumers mirror the roles into their own systems (the Discord
@@ -276,8 +342,9 @@ async def participant_roles(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
     pdata = get_single_project()
-    # Roles are minted once, at decode time, by scoutnet_forms.py - read the
-    # stored field rather than recomputing it on every request.
+    # Minted roles are computed once, at decode time, by scoutnet_forms.py;
+    # hand-assigned ones are merged in here, from the scoutnet_db object, so a
+    # write shows up on the next request without anything being re-derived.
     #
     # Members with no roles are omitted rather than sent as empty lists: the
     # meaning is identical and it keeps the body to the few hundred people who
@@ -288,7 +355,7 @@ async def participant_roles(
     participants = {
         str(member_id): member_roles
         for member_id, info in pdata.participants.items()
-        if (member_roles := info.get("roles"))
+        if (member_roles := _all_roles(member_id, info))
     }
 
     # Hash the exact body we return, so the ETag cannot drift from the content.
@@ -300,3 +367,37 @@ async def participant_roles(
 
     logger.info("Served roles for %d members to %s", len(participants), user)
     return Response(content=body, media_type="application/json", headers={"ETag": etag})
+
+
+@router.post(
+    "/{member_id}/role",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    response_description="The member's stored object after the write",
+)
+async def set_roles(
+    member_id: int,
+    update: RolesUpdate,
+    user: AuthUser = Depends(require_auth_user),
+):
+    """Replace one participant's hand-assigned roles. Kontingentledning only.
+
+    The whole list, not a delta: removing a role is just leaving it out. The
+    change is in /roles as soon as this returns.
+    """
+    if not user.has_role("wsj27:cmt"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Kontingentledning may set roles.")
+    if member_id not in get_single_project().participants:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found in project.")
+    if bad := [role for role in update.roles if not is_assigned_role(role)]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Roles must be under 'wsj27:access:': {', '.join(bad)}",
+        )
+
+    logger.info("%s set roles %s for member %s", user, update.roles, member_id)
+    try:
+        return await scoutnet_db.set_values(member_id, {STORED_ROLES_KEY: update.roles or None})
+    except scoutnet_db.ScoutnetDbError as exc:
+        logger.error("Role write for member %s failed: %s", member_id, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc

@@ -7,8 +7,8 @@ in a database of our own.
 
 Storage only. What any particular key *means* — which ones surface on the
 participant record, which grant roles — is the forms decoder's business, the
-same as for every other Scoutnet answer; see `_apply_scout_db()` there. This
-module never looks inside the object it stores.
+same as for every other Scoutnet answer. This module never looks inside the
+object it stores.
 
 Nothing else may use the field, and nothing else writes it: a human editing it
 in the Scoutnet admin UI would be editing a JSON blob by hand.
