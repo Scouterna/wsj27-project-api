@@ -182,6 +182,11 @@ async def scoutnet_init() -> None:
         else:
             logger.critical("Initial cache load failed and no disk cache, shutting down")
             os._exit(1)  # Kill app without a stack trace. K8S will eventually restart it.
+    if settings.SCOUTNET_SNAPSHOT_DIR:
+        # Re-reading the snapshot would bring back nothing new, and would drop
+        # every write made since startup from the cached records.
+        logger.warning("SCOUTNET_SNAPSHOT_DIR is set — serving %s, no refreshes", settings.SCOUTNET_SNAPSHOT_DIR)
+        return
     _refresh_task = asyncio.create_task(_scheduled_cache_refresh())
 
 
@@ -209,6 +214,18 @@ def dev_cache(func):
 
     @functools.wraps(func)
     async def wrapper(url: str) -> dict:
+        if settings.SCOUTNET_SNAPSHOT_DIR:
+            # Same file naming as the dev cache, so a .dev_cache/ copied over
+            # as-is works. Never falls through to Scoutnet: a live fetch is
+            # exactly what snapshot mode exists to avoid.
+            url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+            snapshot_file = settings.SCOUTNET_SNAPSHOT_DIR / f"{url_hash}.json"
+            try:
+                return json.loads(snapshot_file.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.error("No usable snapshot for %s: %s", url.split("?")[0], exc)
+                raise ScoutnetRequestError(f"Snapshot missing: {snapshot_file}") from exc
+
         if not settings.SCOUTNET_DEV_CACHE:
             return await func(url)
 
@@ -358,6 +375,8 @@ async def scoutnet_refresh(user: AuthUser = Depends(require_auth_user)):
     """
     Refetches all data from Scoutnet and fills cache
     """
+    if settings.SCOUTNET_SNAPSHOT_DIR:
+        raise HTTPException(status_code=409, detail="Serving a frozen Scoutnet snapshot; refresh is disabled")
     try:
         await _update_project_cache()
     except Exception:
