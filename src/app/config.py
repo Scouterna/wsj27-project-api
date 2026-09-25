@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # to fetch fresh data. Never set this in a deployment — it would freeze the
     # app on whatever data happened to be cached first.
     SCOUTNET_DEV_CACHE: bool = False
+    # Temporary, for deployments: serve every Scoutnet GET from a frozen copy of
+    # .dev_cache/ in this directory and never read from Scoutnet at all. A
+    # missing file is an error, not a live fetch. Writes to Scoutnet still go
+    # out. Put in place when Scoutnet started returning broken participant
+    # answers (2026-09-25); unset it once that is fixed. The files hold
+    # personal data, so they live on the persist volume, never in the repo.
+    SCOUTNET_SNAPSHOT_DIR: Path | None = None
     # How often the background task refreshes the Scoutnet cache, in hours,
     # counted from 03:00 Europe/Stockholm. Hourly while the Scoutnet data is
     # still churning; set it back to 24 for a single nightly run once it has
