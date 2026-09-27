@@ -6,8 +6,8 @@ Medlemsnummer,Postnummer,Postort,Land
 3318342,1190,Forest,Belgien
 3243851,2200,København N,Danmark
 3395008,3020,"Meycauayan City, Bulacan",Filippinerna
-3230420,9010,TROMSØ,Norge
-3134273,9010,TROMSØ,Norge
+3230420,9010,Tromsø,Norge
+3134273,9010,Tromsø,Norge
 3322755,22605,Hamburg,Tyskland
 3379002,111 38,Stockholm,Sverige
 3287235,112 15,Stockholm,Sverige
@@ -133,7 +133,7 @@ Medlemsnummer,Postnummer,Postort,Land
 3366262,120 56,Årsta,Sverige
 3317732,120 56,Årsta,Sverige
 3363993,120 57,Årsta,Sverige
-3368964,120 65,Stockohlm,Sverige
+3368964,120 65,Stockholm,Sverige
 3385953,120 70,Stockholm,Sverige
 3361489,120 70,Stockholm,Sverige
 3447199,121 32,Enskededalen,Sverige
@@ -259,7 +259,7 @@ Medlemsnummer,Postnummer,Postort,Land
 3353824,127 30,Skärholmen,Sverige
 3141943,127 32,Skärholmen,Sverige
 3037118,127 34,Skärholmen,Sverige
-3384817,127 37,skärholmen,Sverige
+3384817,127 37,Skärholmen,Sverige
 3390752,127 39,Skärholmen,Sverige
 3355908,127 41,Skärholmen,Sverige
 3322409,127 61,Skärholmen,Sverige
@@ -443,7 +443,7 @@ Medlemsnummer,Postnummer,Postort,Land
 3362155,138 37,Älta,Sverige
 3288095,138 39,Älta,Sverige
 3339164,138 39,Älta,Sverige
-3361259,138 40,älta,Sverige
+3361259,138 40,Älta,Sverige
 3367402,139 36,Värmdö,Sverige
 3406010,139 36,Värmdö,Sverige
 3324131,139 36,Värmdö,Sverige
@@ -1508,7 +1508,7 @@ Medlemsnummer,Postnummer,Postort,Land
 3302467,286 72,Åsljunga,Sverige
 3365342,288 33,Vinslöv,Sverige
 3390023,288 33,Vinslöv,Sverige
-3348954,288 34,VINSLÖV,Sverige
+3348954,288 34,Vinslöv,Sverige
 3390018,288 34,Vinslöv,Sverige
 3401049,288 90,Vinslöv,Sverige
 3330801,289 46,Glimåkra,Sverige
