@@ -329,9 +329,7 @@ def scoutnet_forms_decoder(
             "member_no": member_no,
             "born": p["date_of_birth"],
             "sex": labels["sex"].get(p["sex"], ""),
-            "member_group": cache.group_map.get(
-                p["primary_membership_info"]["group_id"] if p["primary_membership_info"] else 0, ""
-            ),
+            "member_group": p["primary_membership_info"]["group_name"] if p["primary_membership_info"] else "",
             "email": p["primary_email"],
             "mobile": p["contact_info"].get("1") if p["contact_info"] else None,
             "city": member_cities.get(member_no),

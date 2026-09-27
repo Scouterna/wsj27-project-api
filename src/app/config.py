@@ -29,8 +29,6 @@ class Settings(BaseSettings):
 
     # --- Scoutnet ---
     SCOUTNET_PROJECTS: list[ProjectConfig]
-    SCOUTNET_BODYLIST_ID: int = 692
-    SCOUTNET_BODYLIST_KEY: str = ""
     # Development only: cache raw Scoutnet GET responses in .dev_cache/ and serve
     # them instead of calling Scoutnet, for a fast startup. Delete the directory
     # to fetch fresh data. Never set this in a deployment — it would freeze the
