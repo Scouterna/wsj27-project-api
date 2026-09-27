@@ -76,7 +76,6 @@ class ProjectCache:
     """Global cache for decoded Scoutnet project data."""
 
     projects: dict = field(default_factory=dict)  # project_id -> CachedProject
-    group_map: dict[int, str] = field(default_factory=dict)  # A non project related map of all groups in Scoutnet
 
 
 # --- Globals ---
@@ -105,7 +104,6 @@ def _load_cache_from_disk(path: Path) -> bool:
     # return False
     try:
         data = json.loads(path.read_text())
-        _project_cache.group_map = {int(k): v for k, v in data["group_map"].items()}
         _project_cache.projects = {
             int(pid): CachedProject(
                 project_id=p["project_id"],
@@ -172,7 +170,6 @@ async def scoutnet_init() -> None:
     global _refresh_task
     if settings.SCOUTNET_DEV_CACHE:
         logger.warning("SCOUTNET_DEV_CACHE is on — serving Scoutnet responses from %s", CACHE_DIR)
-    await _load_initial_group_map()  # Retrive an initial group map
     disk_cache_loaded = _load_cache_from_disk(CACHE_FILE)
     try:
         await _update_project_cache()  # Fill cache at start
@@ -330,27 +327,6 @@ async def _update_project_cache() -> None:
     scoutnet_forms_decoder(all_data, _project_cache)  # Call a project special decoder
     _save_cache_to_disk(CACHE_FILE)
     logger.info("Finish cache update")
-
-
-async def _load_initial_group_map() -> None:
-    group_map = {}
-    if settings.SCOUTNET_BODYLIST_KEY:  # Fetch map from Scoutnet
-        try:
-            url = f"https://scoutnet.se/api/body_key_list?id={settings.SCOUTNET_BODYLIST_ID}&key={settings.SCOUTNET_BODYLIST_KEY}"
-            raw_map = await _scoutnet_get(url)
-            group_map = {g["body_id"]: g["body_name"] for g in raw_map.values() if g.get("body_type") == "group"}
-        except Exception:
-            logger.warning("Failed to fetch group_map from Scoutnet, falling back to local file")
-    if not group_map:
-        try:  # Fall back to persisted disk cache
-            data = json.loads(CACHE_FILE.read_text())
-            group_map = {int(k): v for k, v in data["group_map"].items()}
-            logger.info("Loaded group_map from disk cache")
-        except Exception:
-            logger.warning("Failed to load group_map from disk cache, using empty initial map")
-
-    _project_cache.group_map = group_map
-    logger.info("Loaded group_map with %d entries", len(_project_cache.group_map))
 
 
 # --- Functions called from the API handlers ---
