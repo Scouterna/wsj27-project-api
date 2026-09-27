@@ -16,8 +16,10 @@ A participant's roles come from two sources, both handled here:
     `wsj27:access:` namespace that nothing else mints. POST /{member_id}/role
     below writes them.
 
-The participant record's `roles` holds only the minted ones. The /roles endpoint
-merges the assigned ones in as it serves, so an assignment reaches it at once.
+The participant record's `roles` holds both: scoutnet_forms.py merges the
+assigned ones in at decode time, and POST /{member_id}/role updates the record
+as it writes, so an assignment takes effect at once rather than at the next
+Scoutnet refresh.
 
 Role *checking* (has_role/has_any_role/role_suffixes) lives with AuthUser in
 authenctication.py, so that the rules for minting a role can change here without
@@ -279,12 +281,6 @@ def merge_stored_roles(roles: list[str], stored: Any, member_no: Any = None) -> 
     return sorted(set(merged))
 
 
-def _all_roles(member_id: int, info: dict) -> list[str]:
-    """One participant's minted roles plus their hand-assigned ones."""
-    stored = (info.get(scoutnet_db.FIELD) or {}).get(STORED_ROLES_KEY)
-    return merge_stored_roles(info.get("roles") or [], stored, member_id)
-
-
 # --- API routes -----------------------------------------------------------------
 #
 # Mounted by main.py under /participants, so the public URLs are
@@ -342,9 +338,8 @@ async def participant_roles(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
 
     pdata = get_single_project()
-    # Minted roles are computed once, at decode time, by scoutnet_forms.py;
-    # hand-assigned ones are merged in here, from the scoutnet_db object, so a
-    # write shows up on the next request without anything being re-derived.
+    # The record's roles are complete: minted and assigned ones are merged at
+    # decode time by scoutnet_forms.py, and set_roles() keeps them current.
     #
     # Members with no roles are omitted rather than sent as empty lists: the
     # meaning is identical and it keeps the body to the few hundred people who
@@ -355,7 +350,7 @@ async def participant_roles(
     participants = {
         str(member_id): member_roles
         for member_id, info in pdata.participants.items()
-        if (member_roles := _all_roles(member_id, info))
+        if (member_roles := info.get("roles"))
     }
 
     # Hash the exact body we return, so the ETag cannot drift from the content.
@@ -383,7 +378,8 @@ async def set_roles(
     """Replace one participant's hand-assigned roles. Kontingentledning only.
 
     The whole list, not a delta: removing a role is just leaving it out. The
-    change is in /roles as soon as this returns.
+    participant record's `roles` is updated too, so the change is in /roles and
+    every other reader as soon as this returns, not at the next Scoutnet refresh.
     """
     if not user.has_role("wsj27:cmt"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Kontingentledning may set roles.")
@@ -397,7 +393,15 @@ async def set_roles(
 
     logger.info("%s set roles %s for member %s", user, update.roles, member_id)
     try:
-        return await scoutnet_db.set_values(member_id, {STORED_ROLES_KEY: update.roles or None})
+        stored = await scoutnet_db.set_values(member_id, {STORED_ROLES_KEY: update.roles or None})
     except scoutnet_db.ScoutnetDbError as exc:
         logger.error("Role write for member %s failed: %s", member_id, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc
+
+    # Only after Scoutnet has committed, like scoutnet_db's own cached copy.
+    # Minted roles are never under wsj27:access:, so dropping that namespace
+    # leaves exactly the minted ones to merge the new assignment into.
+    record = get_single_project().participants[member_id]
+    minted = [role for role in record.get("roles") or [] if not is_assigned_role(role)]
+    record["roles"] = merge_stored_roles(minted, update.roles, member_id)
+    return stored

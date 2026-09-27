@@ -46,3 +46,29 @@ def test_decoder_stores_minted_roles_instead_of_access_level():
     # applies when a member is missing from the CSV.
     assert partdata["roles"] == ["wsj27:cmt"]
     assert "access_level" not in partdata
+
+
+def test_decoder_merges_assigned_roles_into_the_record(monkeypatch):
+    """`roles` is complete on its own; nothing downstream has to merge again."""
+    import json
+
+    from app import scoutnet_db
+
+    monkeypatch.setattr(scoutnet_db.settings, "SCOUTNET_DB_HMAC_KEY", "")
+    access = "wsj27:access:Hälsa plus intern information"
+    stored = json.dumps({"v": 1, "d": {"roles": [access]}})
+    raw = _raw_participant(questions={"90951": "64031", scoutnet_db.QUESTION_IDS["Kontingentledning"]: stored})
+    project = ScoutnetProjectData(
+        project_id=1,
+        project_name="Test project",
+        groups={},
+        participants={"participants": {"1": raw}, "labels": {"sex": {}}},
+        questions={"questions": {}},
+    )
+    cache = ProjectCache()
+
+    scoutnet_forms_decoder([project], cache)
+
+    partdata = cache.projects[1].participants[1000000]
+    assert partdata["roles"] == sorted(["wsj27:cmt", access])
+    assert partdata[scoutnet_db.FIELD] == {"roles": [access]}

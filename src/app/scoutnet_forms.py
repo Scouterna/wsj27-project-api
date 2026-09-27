@@ -5,7 +5,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import scoutnet_db
-from .roles import roles_for_participant
+from .roles import STORED_ROLES_KEY, merge_stored_roles, roles_for_participant
 from .scoutnet import CachedProject, ProjectCache, ScoutnetProjectData
 
 logger = logging.getLogger(__name__)
@@ -317,11 +317,20 @@ def scoutnet_forms_decoder(
         # each lookup. See _load_cache_from_disk() for the other half.
         member_no = int(p["member_no"])
 
+        # This app's own stored values (patrol, avatar URL, assigned roles), as
+        # they are - consumers read them from here.
+        stored = scoutnet_db.stored_for(p["questions"], member_no, member_type)
+
         # access_level is only ever an input to the wsj27:access:<level> role,
         # never read on its own - mint the role here, once, rather than
         # storing access_level for roles.py to turn into one on every request.
-        roles = roles_for_participant(
-            {"member_type": member_type, "troop": troop, "member_no": member_no, "access_level": access_level}
+        # Assigned roles are merged in too, so `roles` is complete on its own.
+        roles = merge_stored_roles(
+            roles_for_participant(
+                {"member_type": member_type, "troop": troop, "member_no": member_no, "access_level": access_level}
+            ),
+            stored.get(STORED_ROLES_KEY),
+            member_no,
         )
 
         partdata = {  # Save som basic data that is quick to filter on
@@ -340,10 +349,8 @@ def scoutnet_forms_decoder(
             # Basic access: contact details, kept out of the health-gated block.
             "contact_info": contact_info,
             "forms_data": forms_data,
+            scoutnet_db.FIELD: stored,
         }
-        # This app's own stored values (patrol, avatar URL, assigned roles), as
-        # they are - consumers read them from here, and /roles merges the roles.
-        partdata[scoutnet_db.FIELD] = scoutnet_db.stored_for(p["questions"], member_no, member_type)
         participants[member_no] = partdata
 
     if unmapped:

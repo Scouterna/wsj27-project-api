@@ -1,4 +1,4 @@
-"""GET /participants/roles: minted roles from the record, plus assigned ones.
+"""GET /participants/roles: the roles on each participant record.
 
 Minted roles are computed once in scoutnet_forms.py at decode time. The first
 test proves the endpoint reads that stored field rather than recomputing it: the
@@ -7,7 +7,8 @@ produce from its own dict (which has no member_type), so a pass here is only
 possible by reading what's stored.
 
 Hand-assigned roles live in the participant's scoutnet_db object and are merged
-in as the endpoint serves, so a write reaches it on the next request.
+into the record's roles at decode time (and by POST /{member_id}/role), so the
+endpoint serves the record as it is. merge_stored_roles() is tested below.
 """
 
 import copy
@@ -42,7 +43,7 @@ ACCESS = "wsj27:access:Hälsa plus intern information"
 PARTICIPANTS = {
     1000000: {"member_no": 1000000, "roles": ["wsj27:cmt:support:halsa"]},
     1000001: {"member_no": 1000001, "roles": []},
-    1000002: {"member_no": 1000002, "roles": ["wsj27:cmt"], scoutnet_db.FIELD: {"roles": [ACCESS]}},
+    1000002: {"member_no": 1000002, "roles": sorted(["wsj27:cmt", ACCESS]), scoutnet_db.FIELD: {"roles": [ACCESS]}},
 }
 
 
@@ -71,7 +72,7 @@ def test_roles_endpoint_serves_the_stored_field_not_a_recompute(client):
     assert "1000001" not in body  # empty roles list omitted, same as before
 
 
-def test_assigned_roles_are_merged_in_as_the_endpoint_serves(client):
+def test_assigned_roles_on_the_record_are_served(client):
     participants = client.get("/participants/roles").json()["participants"]
     assert participants["1000002"] == sorted(["wsj27:cmt", ACCESS])
 
@@ -80,7 +81,7 @@ def test_a_member_with_only_an_assigned_role_is_listed(client):
     """Omission means "no roles", so an assigned role alone must still show up."""
     from app import roles as roles_module
 
-    roles_module.get_single_project().participants[1000001][scoutnet_db.FIELD] = {"roles": [ACCESS]}
+    roles_module.get_single_project().participants[1000001]["roles"] = [ACCESS]
     participants = client.get("/participants/roles").json()["participants"]
     assert participants["1000001"] == [ACCESS]
 

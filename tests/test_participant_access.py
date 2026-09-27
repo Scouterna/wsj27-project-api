@@ -549,6 +549,36 @@ def test_an_empty_list_clears_the_roles(client, writes):
     assert writes == [(1000018, {"roles": None})]
 
 
+def test_set_roles_updates_the_record_without_waiting_for_a_refresh(client, writes):
+    """Minted roles are kept, the previous assignment is replaced."""
+    from app import roles as roles_module
+
+    record = roles_module.get_single_project().participants[1000018]
+    record["roles"] = ["wsj27:al:18", "wsj27:access:old"]
+
+    client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": [ACCESS_ROLE]})
+    assert record["roles"] == sorted(["wsj27:al:18", ACCESS_ROLE])
+
+    client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": []})
+    assert record["roles"] == ["wsj27:al:18"]
+
+
+def test_a_failed_role_write_leaves_the_record_alone(client, monkeypatch):
+    """The record must not claim a role Scoutnet never stored."""
+    from app import roles as roles_module
+    from app import scoutnet_db
+
+    async def _boom(member_no, values):
+        raise scoutnet_db.ScoutnetDbError("Scoutnet rejected the write")
+
+    monkeypatch.setattr(scoutnet_db, "set_values", _boom)
+    record = roles_module.get_single_project().participants[1000018]
+    before = record.get("roles")
+
+    client.as_user(CMT_PROGRAM).post("/participants/1000018/role", json={"roles": [ACCESS_ROLE]})
+    assert record.get("roles") == before
+
+
 @pytest.mark.parametrize("member", [1000018, 1000019], ids=["own-troop", "other-troop"])
 def test_only_cmt_may_set_roles(client, writes, member):
     response = client.as_user(LEADER_18).post(f"/participants/{member}/role", json={"roles": [ACCESS_ROLE]})
