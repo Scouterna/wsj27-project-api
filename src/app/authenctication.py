@@ -262,7 +262,8 @@ async def require_auth_user(request: Request) -> AuthUser:
             logger.info("No token presented for %s %s", request.method, request.url.path)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
         else:  # Authentication disabled. Return a fake user, configurable via env vars.
-            _, _, member_no = settings.FAKE_USER_PREFERRED_USERNAME.partition("|")
+            # "1234567@scoutnet" -> "1234567"; the older "scoutnet|1234567" still works.
+            member_no = settings.FAKE_USER_PREFERRED_USERNAME.removesuffix("@scoutnet").rpartition("|")[2]
             return AuthUser(
                 name="Fake User",
                 preferred_username=settings.FAKE_USER_PREFERRED_USERNAME,

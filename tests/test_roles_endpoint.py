@@ -25,7 +25,7 @@ from app.authenctication import AuthUser, require_auth_user
 def _user(*roles: str) -> AuthUser:
     return AuthUser(
         name="Test User",
-        preferred_username="scoutnet|1234567",
+        preferred_username="1234567@scoutnet",
         given_name="Test",
         family_name="User",
         member_no="1234567",
