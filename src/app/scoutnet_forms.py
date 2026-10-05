@@ -1,4 +1,3 @@
-import csv
 import json
 import logging
 from collections import Counter
@@ -15,11 +14,6 @@ logger = logging.getLogger(__name__)
 # See docs/forms-data-decoder.md.
 TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
 
-# Hand-maintained, one-off export: member_no -> Postort/Land. Not Scoutnet
-# data, so it is joined in here rather than decoded from p["questions"].
-CITY_FILE = Path(__file__).parent / "members_city.csv"
-
-
 # 84942: Typ av ansökan
 # - 57999: IST (funktionär)
 # - 58000: Deltagare
@@ -35,6 +29,9 @@ CITY_FILE = Path(__file__).parent / "members_city.csv"
 
 # 107592: Avdelning (Ledare)
 # 88168: Avdelning (Deltagare)
+
+# 119951: Postadress (form 39188)
+# 119950: Postadress (form 47115)
 
 
 def _load_templates(qdefs: dict) -> dict:
@@ -78,41 +75,29 @@ def _load_templates(qdefs: dict) -> dict:
     return templates
 
 
-def _load_member_cities(path: Path = CITY_FILE) -> dict[int, str]:
-    """Read CITY_FILE into a member_no -> city string map.
+# "<Postnummer> | <Postort> | <Land>", e.g. "413 19 | Göteborg | Sverige", as
+# written by sync-postal-code. The pipes are what make it parseable: foreign
+# postcodes contain letters and spaces ("NP44 6EA") and towns contain commas
+# ("Meycauayan City, Bulacan").
+def _city_from_address(address: str | None) -> str | None:
+    """The Postadress answer as a city string, or None when it is blank.
 
-    City is Postort; Postnummer is skipped for now, and Land is appended in
+    City is Postort; Postnummer is dropped, and Land is appended in
     parentheses when it isn't Sverige, since a bare city name is ambiguous
-    without a country for most of the non-Swedish rows.
-
-    Logs rather than raises: a missing or malformed file must not take the
-    API down, it just means nobody gets a city.
+    without a country for most of the non-Swedish answers. Anything not in
+    the three-part pipe form yields None rather than a guess.
     """
-    try:
-        with path.open(encoding="utf-8-sig", newline="") as fh:
-            rows = list(csv.DictReader(fh))
-    except OSError as exc:
-        logger.warning("Could not read member cities from %s: %s", path, exc)
-        return {}
-
-    cities: dict[int, str] = {}
-    for row in rows:
-        raw_member_no = (row.get("Medlemsnummer") or "").strip()
-        if not raw_member_no:
-            continue
-        try:
-            member_no = int(raw_member_no)
-        except ValueError:
-            logger.warning("Member cities: %r is not a member number; skipping row", raw_member_no)
-            continue
-        city = (row.get("Postort") or "").strip()
-        if not city:
-            continue
-        country = (row.get("Land") or "").strip()
-        if country and country != "Sverige":
-            city = f"{city} ({country})"
-        cities[member_no] = city
-    return cities
+    if not address:
+        return None
+    parts = [part.strip() for part in address.split("|")]
+    if len(parts) != 3:
+        return None
+    _, city, country = parts
+    if not city:
+        return None
+    if country and country != "Sverige":
+        city = f"{city} ({country})"
+    return city
 
 
 def _decode_answer(qdef: dict, raw, unmapped: Counter | None = None):
@@ -280,7 +265,6 @@ def scoutnet_forms_decoder(
     labels = project.participants["labels"]
     qdefs = project.questions["questions"]  # qid -> definition, both forms merged
     templates = _load_templates(qdefs)
-    member_cities = _load_member_cities()
     unmapped: Counter = Counter()  # choice answers that match no option, summarised below
     logger.debug("Processing %s participants for project %s", len(pdata), project.project_name)
 
@@ -331,7 +315,7 @@ def scoutnet_forms_decoder(
             "member_group": p["primary_membership_info"]["group_name"] if p["primary_membership_info"] else "",
             "email": p["primary_email"],
             "mobile": p["contact_info"].get("1") if p["contact_info"] else None,
-            "city": member_cities.get(member_no),
+            "city": _city_from_address(p["questions"].get("119951") or p["questions"].get("119950")),
             "member_type": member_type,
             "participation_type": participation_type,
             "roles": roles,
