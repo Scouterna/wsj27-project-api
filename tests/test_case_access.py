@@ -1,12 +1,14 @@
 """Case access by type: `hälsa` for the health team, `cmt` for every CMT member,
 `avdelning` for the leaders of the case's own troop, and anyone on a case's
-`extra_access` list.
+`extra_access` list — all of it narrowed by the case's and each note's
+`secrecy_level`.
 
 The routes are driven on a bare app with the database calls replaced, so a
 refusal can be checked to come before any case is looked up or written, and a
 case of another type to look exactly like a missing one.
 """
 
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -34,22 +36,44 @@ def _user(*roles: str) -> AuthUser:
 
 @pytest.fixture
 def db_calls(monkeypatch):
-    """Records every database call. A case lookup finds `db_calls.case_type` in `.case_troop`, if set."""
-    calls = type("Calls", (list,), {"case_type": None, "case_troop": "18", "extra_access": []})()
+    """Records every database call.
+
+    If `db_calls.case_type` is set, case 1 exists with the attributes below, and
+    its notes are `db_calls.notes`.
+    """
+    defaults = {"case_type": None, "case_troop": "18", "extra_access": [], "secrecy_level": 3, "creator_id": 999}
+    calls = type("Calls", (list,), {**defaults, "notes": []})()
 
     async def fake(*args):
         calls.append(args)
-        if args[0].startswith("SELECT type, troop, extra_access FROM cases") and calls.case_type:
-            return {"type": calls.case_type, "troop": calls.case_troop, "extra_access": calls.extra_access}
+        if not calls.case_type or not re.match(r"SELECT [\w, *]+ FROM cases WHERE id = \$1$", args[0]):
+            return None
+        return {
+            "type": calls.case_type,
+            "troop": calls.case_troop,
+            "extra_access": calls.extra_access,
+            "secrecy_level": calls.secrecy_level,
+            "creator_id": calls.creator_id,
+            "closed": False,
+        }
 
     async def fake_list(*args):
         calls.append(args)
-        return []
+        return calls.notes if args[0].startswith("SELECT * FROM case_notes") else []
 
     monkeypatch.setattr(case_module, "db_fetchrow", fake)
     monkeypatch.setattr(case_module, "db_fetch", fake_list)
     monkeypatch.setattr(case_module, "db_execute", fake)
+    monkeypatch.setattr(case_module, "db_transaction", lambda: calls.append(("BEGIN",)) or _NoDatabase())
     return calls
+
+
+class _NoDatabase:
+    async def __aenter__(self):
+        raise RuntimeError("no database in these tests")
+
+    async def __aexit__(self, *exc):
+        return False
 
 
 def _client(*roles: str) -> TestClient:
@@ -155,6 +179,7 @@ def test_listing_and_tags_are_limited_to_what_the_caller_may_see(roles, full_typ
     assert tags[1:] == (full_types, troops, 1234567)
     for sql in (listing[0], tags[0]):
         assert "$3 = ANY(c.extra_access)" in sql  # granted cases are listed whatever their type
+    assert case_module._NOTE_SCOPE in tags[0]  # a hidden note's tags stay hidden
 
 
 @pytest.mark.parametrize(
@@ -179,22 +204,20 @@ def test_unknown_case_types_are_rejected(db_calls):
     assert db_calls == []
 
 
-@pytest.mark.parametrize(
-    ("roles", "case_type"), [([CMT_HEALTH], "hälsa"), ([CMT_IT], "cmt"), ([LEADER_18], "avdelning")]
-)
-def test_secrecy_level_is_stored_as_3_whatever_is_sent(roles, case_type, monkeypatch):
-    sent = []
+@pytest.mark.parametrize(("sent", "stored"), [({}, 3), ({"secrecy_level": 4}, 4), ({"secrecy_level": 5}, 5)])
+def test_a_case_is_stored_with_the_secrecy_level_sent_or_3(sent, stored, monkeypatch):
+    calls = []
 
     async def fake_fetchrow(sql, *args):
-        sent.append((sql, args))
+        calls.append(args)
         raise RuntimeError("stop here")
 
     monkeypatch.setattr(case_module, "db_fetchrow", fake_fetchrow)
+    body = {k: v for k, v in BODY.items() if k != "secrecy_level"}
     with pytest.raises(RuntimeError):
-        _client(*roles).post("/cases", json={**BODY, "type": case_type})
-
-    [(_, args)] = sent
-    assert args[1] == 3
+        _client(CMT_HEALTH).post("/cases", json={**body, "type": "hälsa", **sent})
+    [args] = calls
+    assert args[1] == stored
 
 
 def _project():
@@ -246,7 +269,7 @@ def test_extra_access_lets_a_member_in_on_a_case_their_roles_do_not_reach(
     db_calls.case_type, db_calls.case_troop, db_calls.extra_access = case_type, case_troop, [ME]
     try:
         _client(*roles).request(method, path, json=body)
-    except TypeError:
+    except TypeError, RuntimeError:
         pass  # the fake database returns no row to build a response from
     assert len(db_calls) > 1  # got past the case lookup
 
@@ -269,10 +292,145 @@ def test_a_grantee_cannot_pass_access_on(db_calls):
 def test_a_role_holder_can_change_extra_access(db_calls):
     db_calls.case_type = "hälsa"
     _client(CMT_HEALTH).put("/cases/1/extra_access", json={"extra_access": [7654321]})
-    assert "UPDATE cases SET extra_access" in db_calls[1][0]
+    assert "UPDATE cases SET extra_access" in db_calls[-1][0]
 
 
 def test_a_grantee_still_cannot_create_cases_of_that_type(db_calls):
     response = _client(CMT_IT).post("/cases", json={**BODY, "type": "hälsa", "extra_access": [ME]})
     assert response.status_code == 403
     assert db_calls == []
+
+
+# --- secrecy_level ------------------------------------------------------------
+
+OTHER = 999  # the fixture's default creator
+
+
+@pytest.mark.parametrize(
+    ("level", "roles", "creator_id", "extra_access", "visible"),
+    [
+        (3, [CMT_HEALTH], OTHER, [], True),  # role holders
+        (3, [CMT_IT], OTHER, [ME], True),  # and grantees
+        (4, [CMT_HEALTH], OTHER, [], True),  # role holders
+        (4, [CMT_IT], OTHER, [ME], False),  # but not grantees, even if one slipped in
+        (5, [CMT_HEALTH], OTHER, [], False),  # not other role holders
+        (5, [CMT_HEALTH], ME, [], True),  # the creator
+        (5, [CMT_IT], ME, [], False),  # who must still hold the role
+        (5, [CMT_IT], OTHER, [ME], True),  # and grantees
+    ],
+)
+def test_who_sees_a_case_at_each_level(level, roles, creator_id, extra_access, visible, db_calls):
+    db_calls.case_type, db_calls.secrecy_level = "hälsa", level
+    db_calls.creator_id, db_calls.extra_access = creator_id, extra_access
+    response = _client(*roles).post("/cases/1/close")
+    assert (len(db_calls) > 1) == visible
+    if not visible:
+        assert response.status_code == 404
+
+
+@pytest.mark.parametrize("level", [1, 2])
+def test_levels_1_and_2_are_not_in_use(level, db_calls):
+    response = _client(CMT_HEALTH).post("/cases", json={**BODY, "type": "hälsa", "secrecy_level": level})
+    assert response.status_code == 422
+    assert db_calls == []
+
+
+def test_a_level_4_case_cannot_be_created_with_extra_access(db_calls):
+    body = {**BODY, "type": "hälsa", "secrecy_level": 4, "extra_access": [7654321]}
+    response = _client(CMT_HEALTH).post("/cases", json=body)
+    assert response.status_code == 422
+    assert db_calls == []
+
+
+@pytest.mark.parametrize(("extra_access", "status_code"), [([7654321], 422), ([], None)])
+def test_a_level_4_case_cannot_be_given_extra_access(extra_access, status_code, db_calls):
+    db_calls.case_type, db_calls.secrecy_level = "hälsa", 4
+    response = _client(CMT_HEALTH).put("/cases/1/extra_access", json={"extra_access": extra_access})
+    updated = any("UPDATE cases SET extra_access" in call[0] for call in db_calls)
+    assert updated == (status_code is None)
+    if status_code:
+        assert response.status_code == status_code
+
+
+@pytest.mark.parametrize(
+    ("roles", "creator_id", "extra_access", "status_code"),
+    [
+        ([CMT_HEALTH], ME, [], None),  # the creator may share it
+        ([CMT_IT], OTHER, [ME], 403),  # a grantee may not
+        ([CMT_HEALTH], OTHER, [], 404),  # another role holder cannot see it at all
+    ],
+)
+def test_who_shares_a_level_5_case(roles, creator_id, extra_access, status_code, db_calls):
+    db_calls.case_type, db_calls.secrecy_level = "hälsa", 5
+    db_calls.creator_id, db_calls.extra_access = creator_id, extra_access
+    response = _client(*roles).put("/cases/1/extra_access", json={"extra_access": [7654321]})
+    updated = any("UPDATE cases SET extra_access" in call[0] for call in db_calls)
+    assert updated == (status_code is None)
+    if status_code:
+        assert response.status_code == status_code
+
+
+@pytest.mark.parametrize(("case_level", "sent", "stored"), [(3, None, 3), (5, None, 5), (3, 4, 4), (4, 5, 5)])
+def test_a_note_gets_the_level_sent_or_its_cases(case_level, sent, stored, db_calls, monkeypatch):
+    inserted = []
+
+    class _Conn:
+        async def fetchrow(self, sql, *args):
+            inserted.append(args)
+            raise RuntimeError("stop here")
+
+    class _Transaction:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(case_module, "db_transaction", _Transaction)
+    db_calls.case_type, db_calls.secrecy_level, db_calls.creator_id = "hälsa", case_level, ME
+    body = {"title": "t", "note": "n"} | ({} if sent is None else {"secrecy_level": sent})
+    with pytest.raises(RuntimeError):
+        _client(CMT_HEALTH).post("/cases/1/notes", json=body)
+    [args] = inserted
+    assert args[2] == stored
+
+
+def test_a_note_cannot_be_below_its_case(db_calls):
+    db_calls.case_type, db_calls.secrecy_level = "hälsa", 4
+    response = _client(CMT_HEALTH).post("/cases/1/notes", json={"title": "t", "note": "n", "secrecy_level": 3})
+    assert response.status_code == 422
+
+
+def _note(note_id, level, creator_id):
+    return {
+        "id": note_id,
+        "case_id": 1,
+        "created_at": "2026-10-07T12:00:00Z",
+        "creator_id": creator_id,
+        "secrecy_level": level,
+        "title": "t",
+        "note": "n",
+        "tags": [],
+    }
+
+
+NOTES = [_note(1, 3, OTHER), _note(2, 4, OTHER), _note(3, 5, OTHER), _note(4, 5, ME)]
+
+
+@pytest.mark.parametrize(
+    ("case_level", "roles", "creator_id", "extra_access", "seen"),
+    [
+        (3, [CMT_HEALTH], OTHER, [], [1, 2, 4]),  # a role holder: all but someone else's level 5
+        (3, [CMT_IT], OTHER, [ME], [1, 4]),  # a grantee: not the level 4 note either
+        (4, [CMT_HEALTH], OTHER, [], [2, 4]),  # someone else's level 5 note is still theirs alone
+        (5, [CMT_HEALTH], ME, [], [3, 4]),  # on a level 5 case, level 5 notes are shared
+        (5, [CMT_IT], OTHER, [ME], [3, 4]),  # with its grantees too
+    ],
+)
+def test_who_sees_which_notes(case_level, roles, creator_id, extra_access, seen, db_calls):
+    db_calls.case_type, db_calls.secrecy_level = "hälsa", case_level
+    db_calls.creator_id, db_calls.extra_access = creator_id, extra_access
+    db_calls.notes = [n for n in NOTES if n["secrecy_level"] >= case_level]
+    response = _client(*roles).get("/cases/1/notes")
+    assert response.status_code == 200
+    assert sorted(n["id"] for n in response.json()) == seen

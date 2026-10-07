@@ -49,10 +49,24 @@ logger = logging.getLogger(__name__)
 # case. The type -> access-level mapping itself is not implemented yet.
 CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
 
-# Cases a caller may see, as SQL over `cases c`, with $1-$3 from _scope_args().
-# An avdelning case is only for the leaders of its own troop (wsj27:al:<troop>),
-# and extra_access lets anyone listed in on a case whatever its type.
-_SCOPE = "(c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)) OR $3 = ANY(c.extra_access))"
+# Who may see what, by secrecy_level (1-2 are not in use yet):
+#   3  the case type's role holders, and anyone on the case's extra_access
+#   4  the role holders only; the case cannot have extra_access
+#   5  the creator (who must still hold the role), and anyone on extra_access
+# A note's own level only restricts when it is above its case's: a level 4 note
+# is hidden from extra_access, a level 5 note is for its author alone.
+#
+# The same rules as SQL over `cases c` / `case_notes n`, with $1-$3 from
+# _scope_args(), for the list and tag queries. Keep the two in step.
+_ROLE_SCOPE = (
+    "((c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)))"
+    " AND (c.secrecy_level < 5 OR c.creator_id = $3))"
+)
+_SCOPE = f"({_ROLE_SCOPE} OR (c.secrecy_level <> 4 AND $3 = ANY(c.extra_access)))"
+_NOTE_SCOPE = (
+    f"(n.secrecy_level <= c.secrecy_level OR (n.secrecy_level = 4 AND {_ROLE_SCOPE})"
+    " OR (n.secrecy_level = 5 AND n.creator_id = $3))"
+)
 
 
 def _troops(user: AuthUser) -> list[str]:
@@ -71,6 +85,36 @@ def _may_access(user: AuthUser, case_type: str, troop: str) -> bool:
     return case_type in _types_for(user) and (case_type != "avdelning" or troop in _troops(user))
 
 
+def _role_access(user: AuthUser, case) -> bool:
+    """Access through the case type's role rather than extra_access."""
+    if not _may_access(user, case["type"], case["troop"]):
+        return False
+    return case["secrecy_level"] < 5 or case["creator_id"] == user.user_id
+
+
+def _has_access(user: AuthUser, case) -> bool:
+    return _role_access(user, case) or (case["secrecy_level"] != 4 and user.user_id in case["extra_access"])
+
+
+def _may_read_note(user: AuthUser, case, note) -> bool:
+    if note["secrecy_level"] <= case["secrecy_level"]:
+        return True
+    if note["secrecy_level"] == 4:
+        return _role_access(user, case)
+    return note["creator_id"] == user.user_id
+
+
+def _check_secrecy(secrecy_level: int, extra_access: list[int]) -> None:
+    if secrecy_level < 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Secrecy levels 1 and 2 are not in use yet"
+        )
+    if secrecy_level == 4 and extra_access:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A secrecy level 4 case cannot have extra_access"
+        )
+
+
 def _scope_args(user: AuthUser) -> list:
     return [[t for t in _types_for(user) if t != "avdelning"], _troops(user), user.user_id]
 
@@ -82,8 +126,8 @@ async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> Aut
 
 
 async def _case_row(case_id: int, user: AuthUser):
-    row = await db_fetchrow("SELECT type, troop, extra_access FROM cases WHERE id = $1", case_id)
-    if row is None or not (_may_access(user, row["type"], row["troop"]) or user.user_id in row["extra_access"]):
+    row = await db_fetchrow("SELECT * FROM cases WHERE id = $1", case_id)
+    if row is None or not _has_access(user, row):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return row
 
@@ -96,7 +140,7 @@ async def _case_user(case_id: int, user: AuthUser = Depends(_require_case_user))
 async def _case_role_user(case_id: int, user: AuthUser = Depends(_require_case_user)) -> AuthUser:
     """Like _case_user, but extra_access is not enough: a grantee cannot pass access on."""
     row = await _case_row(case_id, user)
-    if not _may_access(user, row["type"], row["troop"]):
+    if not _role_access(user, row):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
     return user
 
@@ -166,7 +210,12 @@ async def db_init_tables() -> None:
 
 
 class CaseCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5, description="1 (least secret) to 5 (most secret). Used in access control.")
+    secrecy_level: int = Field(
+        3,
+        ge=1,
+        le=5,
+        description="1 (least secret) to 5 (most secret). Used in access control. 1 and 2 are not in use yet.",
+    )
     title: str
     type: str = Field(
         description="One of the values from `GET /cases/types`. Used as a filer in searches and enforces access control."
@@ -212,7 +261,9 @@ class AssigneeUpdate(BaseModel):
 
 
 class NoteCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5, description="Must be >= the case's own secrecy_level.")
+    secrecy_level: int | None = Field(
+        None, ge=1, le=5, description="Must be >= the case's own secrecy_level. Defaults to the case's."
+    )
     title: str
     note: str
     tags: list[str] = Field(default_factory=list)
@@ -267,6 +318,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Member {case.about_person_id} is not in troop {case.troop}",
             )
+    _check_secrecy(case.secrecy_level, case.extra_access)
 
     row = await db_fetchrow(
         """
@@ -275,7 +327,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
         RETURNING *
         """,
         user.user_id,
-        3,  # case.secrecy_level
+        case.secrecy_level,
         case.title,
         case.type,
         case.about_person_id,
@@ -419,7 +471,8 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     if case_row["closed"]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is closed")
-    if note.secrecy_level < case_row["secrecy_level"]:
+    secrecy_level = case_row["secrecy_level"] if note.secrecy_level is None else note.secrecy_level
+    if secrecy_level < case_row["secrecy_level"]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Note secrecy level must be equal or higher than the case's secrecy level",
@@ -434,7 +487,7 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_
             """,
             case_id,
             user.user_id,
-            3,  # note.secrecy_level
+            secrecy_level,
             note.title,
             note.note,
             note.tags,
@@ -463,9 +516,7 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_
     },
 )
 async def get_case_notes(case_id: int, user: AuthUser = Depends(_case_user)):
-    case_row = await db_fetchrow("SELECT id FROM cases WHERE id = $1", case_id)
-    if case_row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+    case_row = await _case_row(case_id, user)
 
     rows = await db_fetch("SELECT * FROM case_notes WHERE case_id = $1 ORDER BY created_at DESC", case_id)
     await db_execute(
@@ -473,7 +524,7 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(_case_user)):
         case_id,
         user.user_id,
     )
-    return [Note(**row) for row in rows]
+    return [Note(**row) for row in rows if _may_read_note(user, case_row, row)]
 
 
 @router.put(
@@ -488,6 +539,9 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(_case_user)):
     },
 )
 async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_case_role_user)):
+    case_row = await db_fetchrow("SELECT secrecy_level FROM cases WHERE id = $1", case_id)
+    if case_row is not None:
+        _check_secrecy(case_row["secrecy_level"], update.extra_access)
     row = await db_fetchrow(
         "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
         case_id,
@@ -579,7 +633,8 @@ async def list_tags(user: AuthUser = Depends(_require_case_user)):
         SELECT DISTINCT tag FROM (
             SELECT unnest(c.tags) AS tag FROM cases c WHERE {_SCOPE}
             UNION
-            SELECT unnest(n.tags) AS tag FROM case_notes n JOIN cases c ON c.id = n.case_id WHERE {_SCOPE}
+            SELECT unnest(n.tags) AS tag FROM case_notes n JOIN cases c ON c.id = n.case_id
+            WHERE {_SCOPE} AND {_NOTE_SCOPE}
         ) all_tags
         ORDER BY tag
         """,
