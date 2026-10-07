@@ -6,6 +6,8 @@ refusal can be checked to come before any case is looked up or written, and a
 case of another type to look exactly like a missing one.
 """
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -190,3 +192,26 @@ def test_secrecy_level_is_stored_as_3_whatever_is_sent(roles, case_type, monkeyp
 
     [(_, args)] = sent
     assert args[1] == 3
+
+
+def _project():
+    return SimpleNamespace(participants={1000018: {"troop": "18"}, 1000019: {"troop": "19"}})
+
+
+@pytest.mark.parametrize("about_person_id", [1000019, 9999999])  # another troop, nobody
+def test_a_leader_cannot_file_a_troop_case_about_someone_outside_it(about_person_id, monkeypatch, db_calls):
+    monkeypatch.setattr(case_module, "get_single_project", _project)
+    body = {**BODY, "type": "avdelning", "about_person_id": about_person_id}
+    response = _client(LEADER_18).post("/cases", json=body)
+    assert response.status_code == 422
+    assert response.json() == {"detail": f"Member {about_person_id} is not in troop 18"}
+    assert db_calls == []
+
+
+@pytest.mark.parametrize("about_person_id", [1000018, None])  # their own troop, the troop as a whole
+def test_a_leader_can_file_a_troop_case_about_their_own_troop(about_person_id, monkeypatch, db_calls):
+    monkeypatch.setattr(case_module, "get_single_project", _project)
+    body = {**BODY, "type": "avdelning", "about_person_id": about_person_id}
+    with pytest.raises(TypeError):  # the fake insert returns no row to build a Case from
+        _client(LEADER_18).post("/cases", json=body)
+    assert "INSERT INTO cases" in db_calls[0][0]
