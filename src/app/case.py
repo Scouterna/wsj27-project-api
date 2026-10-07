@@ -13,15 +13,15 @@ code, not as DB CHECK constraints: the schema is still in flux, and
 constraint baked in at creation time would silently go stale against an
 already-existing table the next time a rule changes.
 
-`secrecy_level` (1-5) and `extra_access` (a list of scoutnet member IDs) exist
-on both cases and notes for the same reason: an access model to build on top
-of. Neither is enforced yet either. The one existing rule that touches them is
+`secrecy_level` (1-5, on cases and notes) and `extra_access` (a list of
+scoutnet member IDs, on cases only) exist for the same reason: an access model
+to build on top of. Neither is enforced yet either. The one existing rule that touches them is
 in `create_note`: a note's own `secrecy_level` may not be set lower than its
 case's. `require_auth_user` gates every route below on being signed in, but
 nothing here yet limits *which* caller may read or write a given case.
 
-`extra_access` and `tags` are plain array columns directly on `cases` and
-`case_notes` (not normalized lookup tables) — see tags-as-plain-arrays in
+`extra_access` and `tags` are plain array columns directly on `cases` (and
+`tags` on `case_notes` too), not normalized lookup tables — see tags-as-plain-arrays in
 project memory for why. `PUT .../extra_access` and `PUT .../tags` both replace
 the whole list; neither merges with what is already there.
 
@@ -106,7 +106,6 @@ async def db_init_tables() -> None:
             secrecy_level  SMALLINT     NOT NULL,
             title          TEXT         NOT NULL,
             note           TEXT         NOT NULL,
-            extra_access   BIGINT[]     NOT NULL DEFAULT '{}',
             tags           TEXT[]       NOT NULL DEFAULT '{}'
         )
     """)
@@ -181,7 +180,6 @@ class NoteCreate(BaseModel):
     secrecy_level: int = Field(ge=1, le=5, description="Must be >= the case's own secrecy_level.")
     title: str
     note: str
-    extra_access: list[int] = Field(default_factory=list, description="Scoutnet member IDs. Not yet enforced.")
     tags: list[str] = Field(default_factory=list)
 
 
@@ -193,7 +191,6 @@ class Note(BaseModel):
     secrecy_level: int
     title: str
     note: str
-    extra_access: list[int]
     tags: list[str]
 
 
@@ -385,8 +382,8 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_
     async with db_transaction() as conn:
         row = await conn.fetchrow(
             """
-            INSERT INTO case_notes (case_id, creator_id, secrecy_level, title, note, extra_access, tags)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO case_notes (case_id, creator_id, secrecy_level, title, note, tags)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *
             """,
             case_id,
@@ -394,7 +391,6 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_
             3,  # note.secrecy_level
             note.title,
             note.note,
-            note.extra_access,
             note.tags,
         )
         await conn.execute(
@@ -454,31 +450,6 @@ async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, user
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)
-
-
-@router.put(
-    "/{case_id}/notes/{note_id}/extra_access",
-    response_model=Note,
-    status_code=status.HTTP_200_OK,
-    summary="Replace a note's extra_access list",
-    description="Whole-list replace, not a merge — send the complete list of member IDs to grant access.",
-    responses={
-        200: {"description": "The note with its extra_access list replaced."},
-        404: {"description": "No note with this id on this case."},
-    },
-)
-async def update_note_extra_access(
-    case_id: int, note_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_case_user)
-):
-    row = await db_fetchrow(
-        "UPDATE case_notes SET extra_access = $3 WHERE id = $2 AND case_id = $1 RETURNING *",
-        case_id,
-        note_id,
-        update.extra_access,
-    )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-    return Note(**row)
 
 
 @router.put(
