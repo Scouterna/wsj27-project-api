@@ -46,7 +46,13 @@ logger = logging.getLogger(__name__)
 
 # Finite but extendable set of case types; each sets up a basic access level for the
 # case. The type -> access-level mapping itself is not implemented yet.
-CASE_TYPES = ["hälsa", "admin", "avdelning"]
+CASE_TYPES = ["hälsa"]
+
+
+async def _require_health_team(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
+    if not user.has_role("wsj27:cmt:support:halsa"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cases are for the health team only")
+    return user
 
 
 # --- Database functions ---
@@ -202,7 +208,7 @@ router = APIRouter()
         422: {"description": "`type` is not one of the values from `GET /cases/types`."},
     },
 )
-async def create_case(case: CaseCreate, user: AuthUser = Depends(require_auth_user)):
+async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_health_team)):
     if case.type not in CASE_TYPES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid case type: {case.type}")
 
@@ -213,7 +219,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(require_auth_us
         RETURNING *
         """,
         user.user_id,
-        case.secrecy_level,
+        3,  # case.secrecy_level
         case.title,
         case.type,
         case.about_person_id,
@@ -243,7 +249,7 @@ async def list_cases(
     tag: str | None = None,
     not_older_than: datetime | None = None,
     include_closed: bool = False,
-    user: AuthUser = Depends(require_auth_user),
+    user: AuthUser = Depends(_require_health_team),
 ):
     conditions = []
     args = []
@@ -286,7 +292,7 @@ async def list_cases(
         409: {"description": "The case is already closed."},
     },
 )
-async def close_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
+async def close_case(case_id: int, user: AuthUser = Depends(_require_health_team)):
     row = await db_fetchrow(
         """
         UPDATE cases
@@ -317,7 +323,7 @@ async def close_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
         409: {"description": "The case is not closed."},
     },
 )
-async def reopen_case(case_id: int, user: AuthUser = Depends(require_auth_user)):
+async def reopen_case(case_id: int, user: AuthUser = Depends(_require_health_team)):
     row = await db_fetchrow(
         """
         UPDATE cases
@@ -351,7 +357,7 @@ async def reopen_case(case_id: int, user: AuthUser = Depends(require_auth_user))
         422: {"description": "The note's secrecy_level is lower than the case's."},
     },
 )
-async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(require_auth_user)):
+async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(_require_health_team)):
     case_row = await db_fetchrow("SELECT secrecy_level, closed FROM cases WHERE id = $1", case_id)
     if case_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
@@ -372,7 +378,7 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(r
             """,
             case_id,
             user.user_id,
-            note.secrecy_level,
+            3,  # note.secrecy_level
             note.title,
             note.note,
             note.extra_access,
@@ -401,7 +407,7 @@ async def create_note(case_id: int, note: NoteCreate, user: AuthUser = Depends(r
         404: {"description": "No case with this id."},
     },
 )
-async def get_case_notes(case_id: int, user: AuthUser = Depends(require_auth_user)):
+async def get_case_notes(case_id: int, user: AuthUser = Depends(_require_health_team)):
     case_row = await db_fetchrow("SELECT id FROM cases WHERE id = $1", case_id)
     if case_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
@@ -427,7 +433,7 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(require_auth_use
     },
 )
 async def update_case_extra_access(
-    case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(require_auth_user)
+    case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_require_health_team)
 ):
     row = await db_fetchrow(
         "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
@@ -451,7 +457,7 @@ async def update_case_extra_access(
     },
 )
 async def update_note_extra_access(
-    case_id: int, note_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(require_auth_user)
+    case_id: int, note_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_require_health_team)
 ):
     row = await db_fetchrow(
         "UPDATE case_notes SET extra_access = $3 WHERE id = $2 AND case_id = $1 RETURNING *",
@@ -475,7 +481,7 @@ async def update_note_extra_access(
         404: {"description": "No case with this id."},
     },
 )
-async def update_case_assignee(case_id: int, update: AssigneeUpdate, user: AuthUser = Depends(require_auth_user)):
+async def update_case_assignee(case_id: int, update: AssigneeUpdate, user: AuthUser = Depends(_require_health_team)):
     row = await db_fetchrow(
         "UPDATE cases SET assigned_to_id = $2 WHERE id = $1 RETURNING *",
         case_id,
@@ -497,7 +503,7 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, user: AuthU
         404: {"description": "No case with this id."},
     },
 )
-async def update_case_tags(case_id: int, update: TagsUpdate, user: AuthUser = Depends(require_auth_user)):
+async def update_case_tags(case_id: int, update: TagsUpdate, user: AuthUser = Depends(_require_health_team)):
     row = await db_fetchrow(
         "UPDATE cases SET tags = $2 WHERE id = $1 RETURNING *",
         case_id,
@@ -519,7 +525,9 @@ async def update_case_tags(case_id: int, update: TagsUpdate, user: AuthUser = De
         404: {"description": "No note with this id on this case."},
     },
 )
-async def update_note_tags(case_id: int, note_id: int, update: TagsUpdate, user: AuthUser = Depends(require_auth_user)):
+async def update_note_tags(
+    case_id: int, note_id: int, update: TagsUpdate, user: AuthUser = Depends(_require_health_team)
+):
     row = await db_fetchrow(
         "UPDATE case_notes SET tags = $3 WHERE id = $2 AND case_id = $1 RETURNING *",
         case_id,
@@ -539,7 +547,7 @@ async def update_note_tags(case_id: int, note_id: int, update: TagsUpdate, user:
     description="Distinct tag names currently applied to any case or note, alphabetically.",
     responses={200: {"description": "All existing tag names."}},
 )
-async def list_tags(user: AuthUser = Depends(require_auth_user)):
+async def list_tags(user: AuthUser = Depends(_require_health_team)):
     rows = await db_fetch("""
         SELECT DISTINCT tag FROM (
             SELECT unnest(tags) AS tag FROM cases
@@ -562,5 +570,5 @@ async def list_tags(user: AuthUser = Depends(require_auth_user)):
     ),
     responses={200: {"description": "All valid case types."}},
 )
-async def list_case_types(user: AuthUser = Depends(require_auth_user)):
+async def list_case_types(user: AuthUser = Depends(_require_health_team)):
     return CASE_TYPES
