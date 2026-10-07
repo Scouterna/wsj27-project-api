@@ -49,9 +49,10 @@ logger = logging.getLogger(__name__)
 # case. The type -> access-level mapping itself is not implemented yet.
 CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
 
-# Cases a caller may see, as SQL over `cases c`, with $1/$2 from _scope_args().
-# An avdelning case is only for the leaders of its own troop (wsj27:al:<troop>).
-_SCOPE = "(c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)))"
+# Cases a caller may see, as SQL over `cases c`, with $1-$3 from _scope_args().
+# An avdelning case is only for the leaders of its own troop (wsj27:al:<troop>),
+# and extra_access lets anyone listed in on a case whatever its type.
+_SCOPE = "(c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)) OR $3 = ANY(c.extra_access))"
 
 
 def _troops(user: AuthUser) -> list[str]:
@@ -70,8 +71,8 @@ def _may_access(user: AuthUser, case_type: str, troop: str) -> bool:
     return case_type in _types_for(user) and (case_type != "avdelning" or troop in _troops(user))
 
 
-def _scope_args(user: AuthUser) -> list[list[str]]:
-    return [[t for t in _types_for(user) if t != "avdelning"], _troops(user)]
+def _scope_args(user: AuthUser) -> list:
+    return [[t for t in _types_for(user) if t != "avdelning"], _troops(user), user.user_id]
 
 
 async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
@@ -80,10 +81,23 @@ async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> Aut
     return user
 
 
-async def _case_user(case_id: int, user: AuthUser = Depends(_require_case_user)) -> AuthUser:
-    row = await db_fetchrow("SELECT type, troop FROM cases WHERE id = $1", case_id)
-    if row is None or not _may_access(user, row["type"], row["troop"]):
+async def _case_row(case_id: int, user: AuthUser):
+    row = await db_fetchrow("SELECT type, troop, extra_access FROM cases WHERE id = $1", case_id)
+    if row is None or not (_may_access(user, row["type"], row["troop"]) or user.user_id in row["extra_access"]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+    return row
+
+
+async def _case_user(case_id: int, user: AuthUser = Depends(_require_case_user)) -> AuthUser:
+    await _case_row(case_id, user)
+    return user
+
+
+async def _case_role_user(case_id: int, user: AuthUser = Depends(_require_case_user)) -> AuthUser:
+    """Like _case_user, but extra_access is not enough: a grantee cannot pass access on."""
+    row = await _case_row(case_id, user)
+    if not _may_access(user, row["type"], row["troop"]):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
     return user
 
 
@@ -473,7 +487,7 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(_case_user)):
         404: {"description": "No case with this id."},
     },
 )
-async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_case_user)):
+async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_case_role_user)):
     row = await db_fetchrow(
         "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
         case_id,

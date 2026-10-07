@@ -1,5 +1,6 @@
 """Case access by type: `hälsa` for the health team, `cmt` for every CMT member,
-`avdelning` for the leaders of the case's own troop.
+`avdelning` for the leaders of the case's own troop, and anyone on a case's
+`extra_access` list.
 
 The routes are driven on a bare app with the database calls replaced, so a
 refusal can be checked to come before any case is looked up or written, and a
@@ -34,12 +35,12 @@ def _user(*roles: str) -> AuthUser:
 @pytest.fixture
 def db_calls(monkeypatch):
     """Records every database call. A case lookup finds `db_calls.case_type` in `.case_troop`, if set."""
-    calls = type("Calls", (list,), {"case_type": None, "case_troop": "18"})()
+    calls = type("Calls", (list,), {"case_type": None, "case_troop": "18", "extra_access": []})()
 
     async def fake(*args):
         calls.append(args)
-        if args[0].startswith("SELECT type, troop FROM cases") and calls.case_type:
-            return {"type": calls.case_type, "troop": calls.case_troop}
+        if args[0].startswith("SELECT type, troop, extra_access FROM cases") and calls.case_type:
+            return {"type": calls.case_type, "troop": calls.case_troop, "extra_access": calls.extra_access}
 
     async def fake_list(*args):
         calls.append(args)
@@ -150,8 +151,10 @@ def test_listing_and_tags_are_limited_to_what_the_caller_may_see(roles, full_typ
     _client(*roles).get("/cases")
     _client(*roles).get("/cases/tags")
     [listing, tags] = db_calls
-    assert case_module._SCOPE in listing[0] and listing[1:3] == (full_types, troops)
-    assert tags[1:] == (full_types, troops)
+    assert case_module._SCOPE in listing[0] and listing[1:4] == (full_types, troops, 1234567)
+    assert tags[1:] == (full_types, troops, 1234567)
+    for sql in (listing[0], tags[0]):
+        assert "$3 = ANY(c.extra_access)" in sql  # granted cases are listed whatever their type
 
 
 @pytest.mark.parametrize(
@@ -215,3 +218,61 @@ def test_a_leader_can_file_a_troop_case_about_their_own_troop(about_person_id, m
     with pytest.raises(TypeError):  # the fake insert returns no row to build a Case from
         _client(LEADER_18).post("/cases", json=body)
     assert "INSERT INTO cases" in db_calls[0][0]
+
+
+# --- extra_access -------------------------------------------------------------
+
+ME = 1234567  # _user()'s member number
+
+GRANTEE_REQUESTS = [
+    ("POST", "/cases/1/close", None),
+    ("POST", "/cases/1/reopen", None),
+    ("GET", "/cases/1/notes", None),
+    ("POST", "/cases/1/notes", {"title": "t", "note": "n", "secrecy_level": 5}),
+    ("PUT", "/cases/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/notes/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/assignee", {"assigned_to_id": None}),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "body"), GRANTEE_REQUESTS)
+@pytest.mark.parametrize(
+    ("roles", "case_type", "case_troop"),
+    [([CMT_IT], "hälsa", "18"), ([LEADER_18], "avdelning", "19"), ([LEADER_18], "cmt", "18")],
+)
+def test_extra_access_lets_a_member_in_on_a_case_their_roles_do_not_reach(
+    method, path, body, roles, case_type, case_troop, db_calls
+):
+    db_calls.case_type, db_calls.case_troop, db_calls.extra_access = case_type, case_troop, [ME]
+    try:
+        _client(*roles).request(method, path, json=body)
+    except TypeError:
+        pass  # the fake database returns no row to build a response from
+    assert len(db_calls) > 1  # got past the case lookup
+
+
+@pytest.mark.parametrize(("method", "path", "body"), GRANTEE_REQUESTS[:1])
+def test_extra_access_for_someone_else_is_not_access(method, path, body, db_calls):
+    db_calls.case_type, db_calls.extra_access = "hälsa", [ME + 1]
+    response = _client(CMT_IT).request(method, path, json=body)
+    assert response.status_code == 404
+    assert len(db_calls) == 1
+
+
+def test_a_grantee_cannot_pass_access_on(db_calls):
+    db_calls.case_type, db_calls.extra_access = "hälsa", [ME]
+    response = _client(CMT_IT).put("/cases/1/extra_access", json={"extra_access": [ME, 7654321]})
+    assert response.status_code == 403
+    assert len(db_calls) == 1
+
+
+def test_a_role_holder_can_change_extra_access(db_calls):
+    db_calls.case_type = "hälsa"
+    _client(CMT_HEALTH).put("/cases/1/extra_access", json={"extra_access": [7654321]})
+    assert "UPDATE cases SET extra_access" in db_calls[1][0]
+
+
+def test_a_grantee_still_cannot_create_cases_of_that_type(db_calls):
+    response = _client(CMT_IT).post("/cases", json={**BODY, "type": "hälsa", "extra_access": [ME]})
+    assert response.status_code == 403
+    assert db_calls == []
