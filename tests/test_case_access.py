@@ -8,7 +8,6 @@ refusal can be checked to come before any case is looked up or written, and a
 case of another type to look exactly like a missing one.
 """
 
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -41,12 +40,21 @@ def db_calls(monkeypatch):
     If `db_calls.case_type` is set, case 1 exists with the attributes below, and
     its notes are `db_calls.notes`.
     """
-    defaults = {"case_type": None, "case_troop": "18", "extra_access": [], "secrecy_level": 3, "creator_id": 999}
+    defaults = {
+        "case_type": None,
+        "case_troop": "18",
+        "extra_access": [],
+        "secrecy_level": 3,
+        "creator_id": 999,
+        "closed": False,
+    }
     calls = type("Calls", (list,), {**defaults, "notes": []})()
 
     async def fake(*args):
         calls.append(args)
-        if not calls.case_type or not re.match(r"SELECT [\w, *]+ FROM cases WHERE id = \$1$", args[0]):
+        if args[0].startswith("SELECT * FROM case_notes WHERE id = $2"):
+            return next((n for n in calls.notes if n["id"] == args[2]), None)
+        if not calls.case_type or args[0] != "SELECT * FROM cases WHERE id = $1":
             return None
         return {
             "type": calls.case_type,
@@ -54,7 +62,7 @@ def db_calls(monkeypatch):
             "extra_access": calls.extra_access,
             "secrecy_level": calls.secrecy_level,
             "creator_id": calls.creator_id,
-            "closed": False,
+            "closed": calls.closed,
         }
 
     async def fake_list(*args):
@@ -268,10 +276,11 @@ def test_extra_access_lets_a_member_in_on_a_case_their_roles_do_not_reach(
 ):
     db_calls.case_type, db_calls.case_troop, db_calls.extra_access = case_type, case_troop, [ME]
     try:
-        _client(*roles).request(method, path, json=body)
+        response = _client(*roles).request(method, path, json=body)
     except TypeError, RuntimeError:
-        pass  # the fake database returns no row to build a response from
-    assert len(db_calls) > 1  # got past the case lookup
+        return  # got past the lookup; the fake database has no row to build a response from
+    # Past the lookup if anything came after it, or if it answered something other than "missing".
+    assert len(db_calls) > 1 or response.json() != {"detail": "Case not found"}
 
 
 @pytest.mark.parametrize(("method", "path", "body"), GRANTEE_REQUESTS[:1])
@@ -434,3 +443,78 @@ def test_who_sees_which_notes(case_level, roles, creator_id, extra_access, seen,
     response = _client(*roles).get("/cases/1/notes")
     assert response.status_code == 200
     assert sorted(n["id"] for n in response.json()) == seen
+
+
+# --- note tags, level 4 notes, closed cases -----------------------------------
+
+
+def _updated(db_calls, table):
+    return any(call[0].lstrip().startswith(f"UPDATE {table}") for call in db_calls)
+
+
+@pytest.mark.parametrize(
+    ("roles", "extra_access", "note_id", "readable"),
+    [
+        ([CMT_HEALTH], [], 3, False),  # someone else's level 5 note
+        ([CMT_HEALTH], [], 4, True),  # the caller's own
+        ([CMT_IT], [ME], 2, False),  # a level 4 note, to a grantee
+        ([CMT_HEALTH], [], 2, True),  # a level 4 note, to a role holder
+        ([CMT_HEALTH], [], 99, False),  # no such note
+    ],
+)
+def test_note_tags_can_only_be_changed_on_a_note_the_caller_may_read(roles, extra_access, note_id, readable, db_calls):
+    db_calls.case_type, db_calls.extra_access, db_calls.notes = "hälsa", extra_access, NOTES
+    try:
+        response = _client(*roles).put(f"/cases/1/notes/{note_id}/tags", json={"tags": ["x"]})
+    except TypeError:
+        response = None  # updated; the fake database returns no row
+    assert _updated(db_calls, "case_notes") == readable
+    if not readable:
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Note not found"}
+
+
+@pytest.mark.parametrize(("roles", "extra_access", "allowed"), [([CMT_HEALTH], [], True), ([CMT_IT], [ME], False)])
+def test_only_role_holders_write_level_4_notes(roles, extra_access, allowed, db_calls):
+    db_calls.case_type, db_calls.extra_access = "hälsa", extra_access
+    try:
+        response = _client(*roles).post("/cases/1/notes", json={"title": "t", "note": "n", "secrecy_level": 4})
+    except RuntimeError:
+        response = None  # reached the insert
+    assert (("BEGIN",) in db_calls) == allowed
+    if not allowed:
+        assert response.status_code == 403
+
+
+def test_a_grantee_may_still_write_a_private_note(db_calls):
+    db_calls.case_type, db_calls.extra_access = "hälsa", [ME]
+    with pytest.raises(RuntimeError):  # reached the insert
+        _client(CMT_IT).post("/cases/1/notes", json={"title": "t", "note": "n", "secrecy_level": 5})
+
+
+CHANGES = [
+    ("POST", "/cases/1/close", None),
+    ("POST", "/cases/1/notes", {"title": "t", "note": "n"}),
+    ("PUT", "/cases/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/notes/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/assignee", {"assigned_to_id": None}),
+    ("PUT", "/cases/1/extra_access", {"extra_access": []}),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "body"), CHANGES)
+def test_a_closed_case_cannot_be_changed(method, path, body, db_calls):
+    db_calls.case_type, db_calls.closed, db_calls.notes = "hälsa", True, NOTES
+    response = _client(CMT_HEALTH).request(method, path, json=body)
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Case is closed"}
+    assert len(db_calls) == 1  # the case lookup, and nothing after it
+
+
+@pytest.mark.parametrize(("closed", "status_code"), [(True, None), (False, 409)])
+def test_only_a_closed_case_can_be_reopened(closed, status_code, db_calls):
+    db_calls.case_type, db_calls.closed = "hälsa", closed
+    response = _client(CMT_HEALTH).post("/cases/1/reopen")
+    assert _updated(db_calls, "cases") == (status_code is None)
+    if status_code:
+        assert response.status_code == status_code
