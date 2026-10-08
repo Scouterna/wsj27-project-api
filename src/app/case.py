@@ -97,6 +97,19 @@ def _has_access(user: AuthUser, case) -> bool:
     return _role_access(user, case) or (case["secrecy_level"] != 4 and user.user_id in case["extra_access"])
 
 
+def _members_with_access(case) -> list[int]:
+    """Everyone who may reach the case: the participants whose roles do, and its extra_access."""
+    members = {
+        member_no
+        for member_no, info in get_single_project().participants.items()
+        if info.get("roles")
+        and _role_access(AuthUser.model_construct(member_no=str(member_no), roles=info["roles"]), case)
+    }
+    if case["secrecy_level"] != 4:
+        members.update(case["extra_access"])
+    return sorted(members)
+
+
 def _may_read_note(user: AuthUser, case, note) -> bool:
     if note["secrecy_level"] <= case["secrecy_level"]:
         return True
@@ -529,6 +542,25 @@ async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Dep
     return [Note(**row) for row in rows if _may_read_note(user, case, row)]
 
 
+@router.get(
+    "/{case_id}/access",
+    response_model=list[int],
+    status_code=status.HTTP_200_OK,
+    summary="List who has access to a case",
+    description=(
+        "Member IDs of everyone who may reach the case: those whose roles give "
+        "access at its secrecy level, plus its `extra_access`. These are the "
+        "members the case can be assigned to."
+    ),
+    responses={
+        200: {"description": "Member IDs, ascending."},
+        404: {"description": "No case with this id."},
+    },
+)
+async def get_case_access(case=Depends(_case)):
+    return _members_with_access(case)
+
+
 @router.put(
     "/{case_id}/extra_access",
     response_model=Case,
@@ -559,14 +591,23 @@ async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, case
     response_model=Case,
     status_code=status.HTTP_200_OK,
     summary="Set or clear a case's assignee",
-    description="Single assignee. Pass `assigned_to_id: null` to unassign.",
+    description=(
+        "Single assignee, who must be one of `GET /cases/{case_id}/access`. Pass `assigned_to_id: null` to unassign."
+    ),
     responses={
         200: {"description": "The case with its assignee updated."},
         404: {"description": "No case with this id."},
         409: {"description": "The case is closed."},
+        422: {"description": "The assignee has no access to the case."},
     },
 )
 async def update_case_assignee(case_id: int, update: AssigneeUpdate, case=Depends(_open_case)):
+    # Checked only here: an assignee who later loses access stays assigned until someone reassigns the case.
+    if update.assigned_to_id is not None and update.assigned_to_id not in _members_with_access(case):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Member {update.assigned_to_id} has no access to this case",
+        )
     row = await db_fetchrow(
         "UPDATE cases SET assigned_to_id = $2 WHERE id = $1 RETURNING *",
         case_id,

@@ -518,3 +518,53 @@ def test_only_a_closed_case_can_be_reopened(closed, status_code, db_calls):
     assert _updated(db_calls, "cases") == (status_code is None)
     if status_code:
         assert response.status_code == status_code
+
+
+# --- who has access, and who a case can be assigned to ------------------------
+
+PARTICIPANTS = {
+    ME: {"roles": [CMT_HEALTH]},
+    1000018: {"roles": [LEADER_18]},
+    1000019: {"roles": ["wsj27:al:19"]},
+    2000001: {"roles": [CMT_IT]},
+    2000002: {"roles": ["wsj27:cmtx:admin"]},  # a string prefix of wsj27:cmt
+    3000001: {"roles": []},
+}
+
+
+@pytest.fixture
+def participants(monkeypatch):
+    monkeypatch.setattr(case_module, "get_single_project", lambda: SimpleNamespace(participants=PARTICIPANTS))
+
+
+@pytest.mark.parametrize(
+    ("case_type", "level", "creator_id", "extra_access", "members"),
+    [
+        ("hälsa", 3, OTHER, [], [ME]),
+        ("hälsa", 3, OTHER, [7654321], [ME, 7654321]),  # grantees, participants or not
+        ("cmt", 3, OTHER, [], [ME, 2000001]),
+        ("avdelning", 3, OTHER, [ME], [1000018, ME]),  # the troop's own leaders only
+        ("hälsa", 4, OTHER, [7654321], [ME]),  # a level 4 case has no grantees, even if one slipped in
+        ("hälsa", 5, ME, [7654321], [ME, 7654321]),  # the creator and grantees
+        ("hälsa", 5, 2000001, [ME], [ME]),  # a creator without the role is out
+    ],
+)
+def test_who_has_access_to_a_case(case_type, level, creator_id, extra_access, members, db_calls, participants):
+    db_calls.case_type, db_calls.secrecy_level = case_type, level
+    db_calls.creator_id, db_calls.extra_access = creator_id, extra_access
+    response = _client(CMT_HEALTH).get("/cases/1/access")
+    assert response.status_code == 200
+    assert response.json() == members
+
+
+@pytest.mark.parametrize(
+    ("assignee", "allowed"),
+    [(ME, True), (7654321, True), (None, True), (2000001, False), (1000018, False), (9999999, False)],
+)
+def test_a_case_can_only_be_assigned_to_someone_with_access(assignee, allowed, db_calls, participants):
+    db_calls.case_type, db_calls.extra_access = "hälsa", [7654321]
+    response = _client(CMT_HEALTH).put("/cases/1/assignee", json={"assigned_to_id": assignee})
+    assert _updated(db_calls, "cases") == allowed
+    if not allowed:
+        assert response.status_code == 422
+        assert response.json() == {"detail": f"Member {assignee} has no access to this case"}
