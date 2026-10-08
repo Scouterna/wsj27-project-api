@@ -25,6 +25,7 @@ a finished product. Expect rough edges and breaking changes.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Health check, no auth. |
+| `GET /participants/troopinfo` | Every participant at once (Kontingentledning only). |
 | `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. |
 | `GET /participants/individual/{member_id}` | A single participant. |
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
