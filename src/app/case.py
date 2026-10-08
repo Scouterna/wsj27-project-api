@@ -40,17 +40,38 @@ from pydantic import BaseModel, Field
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
 from .db import db_execute, db_fetch, db_fetchrow, db_transaction
+from .scoutnet import get_single_project
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # Finite but extendable set of case types; each sets up a basic access level for the
 # case. The type -> access-level mapping itself is not implemented yet.
-CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt"}
+CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
+
+# Cases a caller may see, as SQL over `cases c`, with $1/$2 from _scope_args().
+# An avdelning case is only for the leaders of its own troop (wsj27:al:<troop>).
+_SCOPE = "(c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)))"
+
+
+def _troops(user: AuthUser) -> list[str]:
+    return sorted(user.role_suffixes("wsj27:al"))
 
 
 def _types_for(user: AuthUser) -> list[str]:
-    return [case_type for case_type, role in CASE_TYPES.items() if user.has_role(role)]
+    return [
+        case_type
+        for case_type, role in CASE_TYPES.items()
+        if user.has_role(role) and (case_type != "avdelning" or _troops(user))
+    ]
+
+
+def _may_access(user: AuthUser, case_type: str, troop: str) -> bool:
+    return case_type in _types_for(user) and (case_type != "avdelning" or troop in _troops(user))
+
+
+def _scope_args(user: AuthUser) -> list[list[str]]:
+    return [[t for t in _types_for(user) if t != "avdelning"], _troops(user)]
 
 
 async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
@@ -60,8 +81,8 @@ async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> Aut
 
 
 async def _case_user(case_id: int, user: AuthUser = Depends(_require_case_user)) -> AuthUser:
-    row = await db_fetchrow("SELECT type FROM cases WHERE id = $1", case_id)
-    if row is None or row["type"] not in _types_for(user):
+    row = await db_fetchrow("SELECT type, troop FROM cases WHERE id = $1", case_id)
+    if row is None or not _may_access(user, row["type"], row["troop"]):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return user
 
@@ -219,8 +240,19 @@ router = APIRouter()
 async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_user)):
     if case.type not in CASE_TYPES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid case type: {case.type}")
-    if case.type not in _types_for(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"No access to case type: {case.type}")
+    if not _may_access(user, case.type, case.troop):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=f"No access to {case.type} cases for {case.troop}"
+        )
+    if case.type == "avdelning" and case.about_person_id is not None:
+        # Same answer for someone missing and someone in another troop, so a
+        # leader cannot use this to find out who is in the contingent.
+        person = get_single_project().participants.get(case.about_person_id)
+        if not person or person["troop"] != case.troop:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Member {case.about_person_id} is not in troop {case.troop}",
+            )
 
     row = await db_fetchrow(
         """
@@ -261,8 +293,8 @@ async def list_cases(
     include_closed: bool = False,
     user: AuthUser = Depends(_require_case_user),
 ):
-    args = [_types_for(user)]
-    conditions = ["c.type = ANY($1)"]
+    args = _scope_args(user)
+    conditions = [_SCOPE]
 
     if about_person_id is not None:
         args.append(about_person_id)
@@ -529,15 +561,15 @@ async def update_note_tags(case_id: int, note_id: int, update: TagsUpdate, user:
 )
 async def list_tags(user: AuthUser = Depends(_require_case_user)):
     rows = await db_fetch(
-        """
+        f"""
         SELECT DISTINCT tag FROM (
-            SELECT unnest(tags) AS tag FROM cases WHERE type = ANY($1)
+            SELECT unnest(c.tags) AS tag FROM cases c WHERE {_SCOPE}
             UNION
-            SELECT unnest(n.tags) AS tag FROM case_notes n JOIN cases c ON c.id = n.case_id WHERE c.type = ANY($1)
+            SELECT unnest(n.tags) AS tag FROM case_notes n JOIN cases c ON c.id = n.case_id WHERE {_SCOPE}
         ) all_tags
         ORDER BY tag
         """,
-        _types_for(user),
+        *_scope_args(user),
     )
     return [row["tag"] for row in rows]
 
