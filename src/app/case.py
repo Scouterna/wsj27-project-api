@@ -45,8 +45,7 @@ from .scoutnet import get_single_project
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-# Finite but extendable set of case types; each sets up a basic access level for the
-# case. The type -> access-level mapping itself is not implemented yet.
+# Finite but extendable set of case types, each with the role a caller needs for it.
 CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
 
 # Cases a caller may see, as SQL over `cases c`, with $1/$2 from _scope_args().
@@ -152,7 +151,11 @@ async def db_init_tables() -> None:
 
 
 class CaseCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5, description="1 (least secret) to 5 (most secret). Used in access control.")
+    secrecy_level: int = Field(
+        ge=1,
+        le=5,
+        description="1 (least secret) to 5 (most secret). Not in use yet: every case is stored with level 3.",
+    )
     title: str
     type: str = Field(
         description="One of the values from `GET /cases/types`. Used as a filer in searches and enforces access control."
@@ -162,7 +165,8 @@ class CaseCreate(BaseModel):
         description="Troop number or function name, as a string (e.g. the `<troop>` in the `wsj27:al:<troop>` role)."
     )
     extra_access: list[int] = Field(
-        default_factory=list, description="Extra access above the deafult. Add the member IDs."
+        default_factory=list,
+        description="Member IDs given access on top of the case type's roles. Not in use yet: always stored empty.",
     )
     tags: list[str] = Field(default_factory=list, description="Free-form labels. `GET /cases/tags` lists those in use.")
 
@@ -198,7 +202,11 @@ class AssigneeUpdate(BaseModel):
 
 
 class NoteCreate(BaseModel):
-    secrecy_level: int = Field(ge=1, le=5, description="Must be >= the case's own secrecy_level.")
+    secrecy_level: int = Field(
+        ge=1,
+        le=5,
+        description="Must be >= the case's own secrecy_level. Not in use yet: every note is stored with level 3.",
+    )
     title: str
     note: str
     tags: list[str] = Field(default_factory=list)
@@ -266,7 +274,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
         case.type,
         case.about_person_id,
         case.troop,
-        case.extra_access,
+        [],  # case.extra_access
         case.tags,
     )
     return Case(**row)
@@ -472,13 +480,10 @@ async def get_case_notes(case_id: int, user: AuthUser = Depends(_case_user)):
         200: {"description": "The case with its extra_access list replaced."},
         404: {"description": "No case with this id."},
     },
+    include_in_schema=False,  # extra_access is not in use yet; the case is returned unchanged
 )
 async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, user: AuthUser = Depends(_case_user)):
-    row = await db_fetchrow(
-        "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
-        case_id,
-        update.extra_access,
-    )
+    row = await db_fetchrow("SELECT * FROM cases WHERE id = $1", case_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)

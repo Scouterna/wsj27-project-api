@@ -179,7 +179,7 @@ def test_unknown_case_types_are_rejected(db_calls):
 @pytest.mark.parametrize(
     ("roles", "case_type"), [([CMT_HEALTH], "hälsa"), ([CMT_IT], "cmt"), ([LEADER_18], "avdelning")]
 )
-def test_secrecy_level_is_stored_as_3_whatever_is_sent(roles, case_type, monkeypatch):
+def test_secrecy_level_and_extra_access_are_stored_as_3_and_empty_whatever_is_sent(roles, case_type, monkeypatch):
     sent = []
 
     async def fake_fetchrow(sql, *args):
@@ -188,10 +188,19 @@ def test_secrecy_level_is_stored_as_3_whatever_is_sent(roles, case_type, monkeyp
 
     monkeypatch.setattr(case_module, "db_fetchrow", fake_fetchrow)
     with pytest.raises(RuntimeError):
-        _client(*roles).post("/cases", json={**BODY, "type": case_type})
+        _client(*roles).post("/cases", json={**BODY, "type": case_type, "extra_access": [7654321]})
 
     [(_, args)] = sent
     assert args[1] == 3
+    assert args[6] == []
+
+
+def test_extra_access_cannot_be_changed_and_is_left_out_of_the_docs(db_calls):
+    db_calls.case_type = "hälsa"
+    client = _client(CMT_HEALTH)
+    client.put("/cases/1/extra_access", json={"extra_access": [7654321]})
+    assert not any("UPDATE" in call[0] for call in db_calls)
+    assert "/cases/{case_id}/extra_access" not in client.get("/openapi.json").json()["paths"]
 
 
 def _project():
