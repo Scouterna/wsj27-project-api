@@ -277,6 +277,10 @@ class AssigneeUpdate(BaseModel):
     assigned_to_id: int | None
 
 
+class TitleUpdate(BaseModel):
+    title: str = Field(min_length=1)
+
+
 class NoteCreate(BaseModel):
     secrecy_level: int | None = Field(
         None, ge=1, le=5, description="Must be >= the case's own secrecy_level. Defaults to the case's."
@@ -612,6 +616,28 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, case=Depend
         "UPDATE cases SET assigned_to_id = $2 WHERE id = $1 RETURNING *",
         case_id,
         update.assigned_to_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+    return Case(**row)
+
+
+@router.put(
+    "/{case_id}/title",
+    response_model=Case,
+    status_code=status.HTTP_200_OK,
+    summary="Change a case's title",
+    responses={
+        200: {"description": "The case with its new title."},
+        404: {"description": "No case with this id."},
+        409: {"description": "The case is closed."},
+    },
+)
+async def update_case_title(case_id: int, update: TitleUpdate, case=Depends(_open_case)):
+    row = await db_fetchrow(
+        "UPDATE cases SET title = $2 WHERE id = $1 RETURNING *",
+        case_id,
+        update.title,
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")

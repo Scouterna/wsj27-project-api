@@ -261,6 +261,7 @@ GRANTEE_REQUESTS = [
     ("GET", "/cases/1/notes", None),
     ("POST", "/cases/1/notes", {"title": "t", "note": "n", "secrecy_level": 5}),
     ("PUT", "/cases/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/title", {"title": "t"}),
     ("PUT", "/cases/1/notes/1/tags", {"tags": []}),
     ("PUT", "/cases/1/assignee", {"assigned_to_id": None}),
 ]
@@ -496,6 +497,7 @@ CHANGES = [
     ("POST", "/cases/1/close", None),
     ("POST", "/cases/1/notes", {"title": "t", "note": "n"}),
     ("PUT", "/cases/1/tags", {"tags": []}),
+    ("PUT", "/cases/1/title", {"title": "t"}),
     ("PUT", "/cases/1/notes/1/tags", {"tags": []}),
     ("PUT", "/cases/1/assignee", {"assigned_to_id": None}),
     ("PUT", "/cases/1/extra_access", {"extra_access": []}),
@@ -568,3 +570,14 @@ def test_a_case_can_only_be_assigned_to_someone_with_access(assignee, allowed, d
     if not allowed:
         assert response.status_code == 422
         assert response.json() == {"detail": f"Member {assignee} has no access to this case"}
+
+
+@pytest.mark.parametrize(("title", "updated"), [("New title", True), ("", False)])
+def test_a_case_can_be_retitled(title, updated, db_calls):
+    db_calls.case_type = "hälsa"
+    response = _client(CMT_HEALTH).put("/cases/1/title", json={"title": title})
+    assert _updated(db_calls, "cases") == updated
+    if updated:
+        assert db_calls[-1][1:] == (1, title)
+    else:
+        assert response.status_code == 422
