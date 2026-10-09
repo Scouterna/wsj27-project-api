@@ -150,11 +150,7 @@ def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[s
     participant and a 403 would take the whole list down over one row.
     """
     if infolevel == "name":
-        return {
-            "member_no": participant["member_no"],
-            "name": participant["name"],
-            "member_type": participant["member_type"],
-        }
+        return {"member_no": participant["member_no"], "name": participant["name"]}
 
     drop = set() if infolevel == "full" else {"forms_data"}
     drop |= withheld.get(participant["member_type"], set())

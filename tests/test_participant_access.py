@@ -421,7 +421,7 @@ def test_a_leaders_own_record_is_stripped_like_any_other_leaders(client):
 def test_a_leaders_name_level_is_unaffected(client):
     """ "name" never carried either field, so there is nothing for the rule to take."""
     rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=name"))
-    assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18", "member_type": "Avdelningsledare"}
+    assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18"}
 
 
 # --- Kontingentledning's own health answers -----------------------------------
