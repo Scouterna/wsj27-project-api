@@ -519,34 +519,61 @@ def writes(monkeypatch):
     return sent
 
 
-def test_a_leader_sets_the_patrol_of_their_own_troop(client, writes):
-    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": "Falken"})
+@pytest.fixture
+def patrol_writes(monkeypatch):
+    """Records each Scoutnet write instead of sending it."""
+    from app import participants as participants_module
 
+    sent = []
+
+    async def fake_set_answer(member_no, question_id, value):
+        sent.append((member_no, question_id, value))
+
+    monkeypatch.setattr(participants_module, "set_answer", fake_set_answer)
+    return sent
+
+
+def test_leader_sets_a_patrol_in_their_own_troop(client, patrol_writes):
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": " Älgen "})
     assert response.status_code == 200
-    assert response.json() == {"patrol": "Falken"}
-    assert writes == [(1000018, {"patrol": "Falken"})]
-    assert client.project.participants[1000018]["patrol"] == "Falken"  # no refresh needed
+    assert response.json() == {"member_no": 1000018, "patrol": "Älgen"}
+    assert patrol_writes == [(1000018, "120104", "Älgen")]
+    assert client.project.participants[1000018]["patrol"] == "Älgen"
 
 
-def test_a_leader_cannot_reach_into_another_troop(client, writes):
-    """404, not 403: the refusal must not confirm that member exists."""
-    response = client.as_user(LEADER_18).post("/participants/1000019/patrol", json={"patrol": "Falken"})
+def test_clearing_a_patrol_writes_an_empty_answer(client, patrol_writes):
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": None})
+    assert response.status_code == 200
+    assert patrol_writes == [(1000018, "120104", "")]
 
+
+@pytest.mark.parametrize(
+    ("roles", "member_no"),
+    [
+        ((LEADER_18,), 1000019),  # another troop
+        ((LEADER_18,), 1000180),  # a fellow leader, not a Deltagare
+        ((CMT_HEALTH,), 1000018),  # the CMT reads everyone but sets no patrols
+        ((LEADER_18,), 9999999),  # nobody
+    ],
+)
+def test_nobody_else_sets_a_patrol(client, patrol_writes, roles, member_no):
+    response = client.as_user(*roles).post(f"/participants/{member_no}/patrol", json={"patrol": "Älgen"})
     assert response.status_code == 404
-    assert writes == []
+    assert patrol_writes == []
 
 
-def test_cmt_may_not_set_a_patrol(client, writes):
-    """A patrol is the troop's own business."""
-    response = client.as_user(CMT_PROGRAM).post("/participants/1000018/patrol", json={"patrol": "Falken"})
+def test_a_failed_scoutnet_write_leaves_the_patrol_as_it_was(client, monkeypatch):
+    from app import participants as participants_module
+    from app.scoutnet import ScoutnetRequestError
 
-    assert response.status_code == 404
-    assert writes == []
+    async def failing_set_answer(member_no, question_id, value):
+        raise ScoutnetRequestError("Scoutnet rejected the write")
 
-
-def test_clearing_a_patrol_removes_the_key(client, writes):
-    client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": ""})
-    assert writes == [(1000018, {"patrol": None})]  # None deletes, per scoutnet_db
+    monkeypatch.setattr(participants_module, "set_answer", failing_set_answer)
+    client.project.participants[1000018]["patrol"] = "Björnen"
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": "Älgen"})
+    assert response.status_code == 502
+    assert client.project.participants[1000018]["patrol"] == "Björnen"
 
 
 def test_cmt_sets_roles(client, writes):
@@ -650,10 +677,10 @@ def test_an_ist_patrol_does_not_join_the_troop_with_its_number(client):
     assert client.as_user(LEADER_18).get("/participants/individual/1000918").status_code == 404
 
 
-def test_a_leader_cannot_set_the_patrol_of_an_ist_member(client, writes):
+def test_a_leader_cannot_set_the_patrol_of_an_ist_member(client, patrol_writes):
     response = client.as_user(LEADER_18).post("/participants/1000918/patrol", json={"patrol": "Falken"})
     assert response.status_code == 404
-    assert writes == []
+    assert patrol_writes == []
 
 
 def test_the_ist_listing_carries_their_patrol(client):

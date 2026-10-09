@@ -94,20 +94,6 @@ def test_an_ist_members_avdelning_is_their_patrol_not_a_troop():
     assert (partdata["troop"], partdata["patrol"]) == ("", "17")
 
 
-def test_a_participants_patrol_is_the_leaders_stored_value(monkeypatch):
-    import json
-
-    from app import scoutnet_db
-
-    monkeypatch.setattr(scoutnet_db.settings, "SCOUTNET_DB_HMAC_KEY", "")
-    stored = json.dumps({"v": 1, "d": {"patrol": "Falken"}})
-    deltagare = _raw_participant(
-        questions={"84942": "58000", "88168": "17", scoutnet_db.QUESTION_IDS["Deltagare"]: stored}
-    )
-    assert (_decode(deltagare)["troop"], _decode(deltagare)["patrol"]) == ("17", "Falken")
-    assert _decode(_raw_participant(questions={"84942": "58000", "88168": "17"}))["patrol"] == ""
-
-
 def test_cmt_gets_no_troop():
     assert _decode(_raw_participant(questions={"90951": "64031", "88168": "17", "107592": "18"}))["troop"] == ""
 
@@ -117,3 +103,20 @@ def test_troop_is_read_from_the_member_types_own_question():
     leader = _raw_participant(questions={"90951": "62319", "88168": "17", "107592": "18"})
     assert _decode(deltagare)["troop"] == "17"
     assert _decode(leader)["troop"] == "18"
+
+
+def test_patrol_is_read_from_patrull():
+    deltagare = _raw_participant(questions={"84942": "58000", "88168": "17", "120104": "Älgen"})
+    ist = _raw_participant(questions={"84942": "57999", "88168": "4", "120104": "IST 12"})
+    assert _decode(deltagare)["patrol"] == "Älgen"
+    assert _decode(ist)["patrol"] == "IST 12"
+
+
+def test_ist_without_patrull_keep_their_avdelning_as_patrol():
+    raw = _raw_participant(questions={"84942": "57999", "88168": "4"})
+    assert _decode(raw)["patrol"] == "4"
+
+
+def test_a_deltagares_avdelning_is_never_their_patrol():
+    raw = _raw_participant(questions={"84942": "58000", "88168": "17"})
+    assert _decode(raw)["patrol"] == ""

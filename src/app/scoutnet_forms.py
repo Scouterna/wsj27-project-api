@@ -31,9 +31,12 @@ TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
 
 # 107592: Avdelning (form 47115, Ledare and CMT)
 # 88168: Avdelning (form 39188, Deltagare and IST)
+# 120104: Patrull (form 39188, Deltagare and IST)
 
 # 119951: Postadress (form 39188)
 # 119950: Postadress (form 47115)
+
+PATROL_QUESTION = "120104"
 
 
 def _load_templates(qdefs: dict) -> dict:
@@ -289,6 +292,13 @@ def scoutnet_forms_decoder(
         # Only from the question for the member's own type, like the travel
         # package below, so an IST member's Avdelning answer never lands here.
         troop = p["questions"].get(troop_question_map.get(member_type, "")) or ""
+        # Plain text, a name or a number or both, and taken as it is: troop
+        # leaders set it through this app, but it is also edited in Scoutnet.
+        # IST patrols were first put in Avdelning, so an IST member whose
+        # Patrull is still empty keeps that answer as their patrol.
+        patrol = p["questions"].get(PATROL_QUESTION) or ""
+        if not patrol and member_type == "IST":
+            patrol = p["questions"].get("88168") or ""
 
         # Left empty when unanswered, which is normal: Kontingentledning are not
         # asked for a travel package at all (all 59 of them in the 2026-09 data).
@@ -312,20 +322,9 @@ def scoutnet_forms_decoder(
         # each lookup. See _load_cache_from_disk() for the other half.
         member_no = int(p["member_no"])
 
-        # This app's own stored values (patrol, avatar URL, assigned roles), as
-        # they are - consumers read them from here.
+        # This app's own stored values (avatar URL, assigned roles), as they
+        # are - consumers read them from here.
         stored = scoutnet_db.stored_for(p["questions"], member_no, member_type)
-
-        # The patrol, top-level so readers need not know where it is kept. For
-        # now that is the troop leader's stored value (POST /{id}/patrol), until
-        # a Scoutnet question of its own replaces it. IST have no troop or
-        # troop leaders, but since 2026-10 their Avdelning answer holds their
-        # IST patrol - a group of adults numbered on its own - so it is moved
-        # here instead of into `troop`. IST fill in form 39188, whose
-        # Avdelning question is 88168.
-        patrol = stored.get("patrol") or ""
-        if member_type == "IST":
-            patrol = p["questions"].get("88168") or ""
 
         # access_level is only ever an input to the wsj27:access:<level> role,
         # never read on its own - mint the role here, once, rather than

@@ -32,8 +32,8 @@ Scoutnet project, so they write the same question on the same member. Only prod
 has a `SCOUTNET_DB_HMAC_KEY`, which gives the asymmetry we want for *reading* -
 prod rejects what dev wrote, dev accepts what prod wrote - but not isolation:
 a dev write still overwrites prod's value, and prod then drops it. `avatar_url`
-recovers by itself on the member's next authenticated request; a hand-assigned
-patrol or role does not. The real fix is a separate question per environment,
+recovers by itself on the member's next authenticated request; an assigned
+role does not. The real fix is a separate question per environment,
 deliberately deferred (2026-09-24) in favour of watching prod's logs for the
 "carries no signature" error below. Leaving `update_key` out of dev's
 `SCOUTNET_PROJECTS` closes it entirely, at the cost of testing writes in dev.

@@ -27,12 +27,12 @@ import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from . import scoutnet_db
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
-from .scoutnet import get_single_project
+from .scoutnet import ScoutnetRequestError, get_single_project, set_answer
+from .scoutnet_forms import PATROL_QUESTION
 
 # --- Settings and data classes ---
 
@@ -63,7 +63,7 @@ NOT_FOUND = "Participant not found in project."
 
 
 class PatrolUpdate(BaseModel):
-    patrol: str | None = None  # None or "" removes the member's patrol
+    patrol: str | None = Field(None, max_length=100)  # None or "" removes the member's patrol
 
 
 # --- Internal helpers ---
@@ -237,31 +237,41 @@ async def individualinfo(
     "/{member_id}/patrol",
     response_model=dict,
     status_code=status.HTTP_200_OK,
-    response_description="The member's stored object after the write",
+    response_description="The member's patrol after the write",
 )
 async def set_patrol(
     member_id: int,
     update: PatrolUpdate,
     user: AuthUser = Depends(require_auth_user),
 ):
-    """Set (or clear) one participant's patrol. Only for the leader of their troop.
+    """Set (or clear) one participant's patrol. Only for the leaders of their troop.
+
+    Written straight to Scoutnet's Patrull question, where it can also be edited
+    by hand. Deltagare only: IST patrols are filled in Scoutnet by a job of
+    their own, and leaders do not answer the form Patrull is on.
 
     `role_suffixes`, not `has_role("wsj27:al")`: a leader of troop 17 may write
     to troop 17 and nothing else.
     """
     meminfo = get_single_project().participants.get(member_id)
-    if not meminfo or meminfo["troop"] not in user.role_suffixes("wsj27:al"):
+    if (
+        not meminfo
+        or meminfo["member_type"] != "Deltagare"
+        or not meminfo["troop"]
+        or meminfo["troop"] not in user.role_suffixes("wsj27:al")
+    ):
         logger.warning("Denied %s patrol write to member %s", user, member_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
 
-    logger.info("%s set patrol %r for member %s", user, update.patrol, member_id)
+    patrol = (update.patrol or "").strip()
+    logger.info("%s set patrol %r for member %s", user, patrol, member_id)
     try:
-        stored = await scoutnet_db.set_values(member_id, {"patrol": update.patrol or None})
-    except scoutnet_db.ScoutnetDbError as exc:
+        await set_answer(member_id, PATROL_QUESTION, patrol)
+    except ScoutnetRequestError as exc:
         logger.error("Patrol write for member %s failed: %s", member_id, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc
 
     # Only after Scoutnet has committed, so the record's `patrol` shows the
     # change at once rather than at the next Scoutnet refresh.
-    meminfo["patrol"] = update.patrol or ""
-    return stored
+    meminfo["patrol"] = patrol
+    return {"member_no": member_id, "patrol": patrol}
