@@ -29,8 +29,8 @@ TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
 # - 73868: Hälsa plus intern information
 # - 73660: Avdelningsledare
 
-# 107592: Avdelning (Ledare)
-# 88168: Avdelning (Deltagare)
+# 107592: Avdelning (form 47115, Ledare and CMT)
+# 88168: Avdelning (form 39188, Deltagare and IST)
 
 # 119951: Postadress (form 39188)
 # 119950: Postadress (form 47115)
@@ -321,10 +321,11 @@ def scoutnet_forms_decoder(
         # a Scoutnet question of its own replaces it. IST have no troop or
         # troop leaders, but since 2026-10 their Avdelning answer holds their
         # IST patrol - a group of adults numbered on its own - so it is moved
-        # here instead of into `troop`.
+        # here instead of into `troop`. IST fill in form 39188, whose
+        # Avdelning question is 88168.
         patrol = stored.get("patrol") or ""
         if member_type == "IST":
-            patrol = p["questions"].get("107592") or p["questions"].get("88168") or patrol
+            patrol = p["questions"].get("88168") or ""
 
         # access_level is only ever an input to the wsj27:access:<level> role,
         # never read on its own - mint the role here, once, rather than

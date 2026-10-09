@@ -6,8 +6,6 @@ right where it is derived instead, and the resulting roles list is stored in
 its place - so a participant record never carries `access_level` at all.
 """
 
-import pytest
-
 from app.scoutnet import ProjectCache, ScoutnetProjectData
 from app.scoutnet_forms import scoutnet_forms_decoder
 
@@ -89,11 +87,10 @@ def _decode(raw: dict) -> dict:
     return cache.projects[1].participants[raw["member_no"]]
 
 
-@pytest.mark.parametrize("question", ["88168", "107592"])
-def test_an_ist_members_avdelning_is_their_patrol_not_a_troop(question):
+def test_an_ist_members_avdelning_is_their_patrol_not_a_troop():
     # An IST "avdelning" is a group of adults with no troop leaders, numbered
     # on its own, so it must never put them in the participant troop 17.
-    partdata = _decode(_raw_participant(questions={"84942": "57999", question: "17"}))
+    partdata = _decode(_raw_participant(questions={"84942": "57999", "88168": "17"}))
     assert (partdata["troop"], partdata["patrol"]) == ("", "17")
 
 
