@@ -249,7 +249,13 @@ def scoutnet_forms_decoder(
         "73868": "Hälsa plus intern information",
         "73660": "Avdelningsledare",
     }
-    # Which question holds the travel package, per applicant type: Deltagandetyp,
+    # Which question holds the troop: only Deltagare and Avdelningsledare
+    # belong to one. IST and Kontingentledning never have a troop.
+    troop_question_map = {
+        "Deltagare": "88168",
+        "Avdelningsledare": "107592",
+    }
+    # Which question holds the travel package, per applicant type:Deltagandetyp,
     # Funktionärstyp and "Med rundresa eller direktresa" all ask the same thing
     # of different people. Read the one belonging to the member's own type - a
     # member who changed type mid-application leaves a stale answer behind on
@@ -293,7 +299,10 @@ def scoutnet_forms_decoder(
             logger.error("No application type found for member %s", p["member_no"])
         if not (member_type := application_type_map.get(application_type, "")):
             logger.error("Application type %s not found in map", application_type)
-        troop = p["questions"].get("107592") or p["questions"].get("88168") or ""
+        # Only from the question for the member's own type, like the travel
+        # package below: an IST member who was once a Deltagare or Ledare keeps
+        # a stale Avdelning answer, which would put them in that troop.
+        troop = p["questions"].get(troop_question_map.get(member_type, "")) or ""
 
         # Left empty when unanswered, which is normal: Kontingentledning are not
         # asked for a travel package at all (all 59 of them in the 2026-09 data).

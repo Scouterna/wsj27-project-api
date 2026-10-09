@@ -46,3 +46,30 @@ def test_decoder_stores_minted_roles_instead_of_access_level():
     # applies when a member is missing from the CSV.
     assert partdata["roles"] == ["wsj27:cmt"]
     assert "access_level" not in partdata
+
+
+def _decode(raw: dict) -> dict:
+    project = ScoutnetProjectData(
+        project_id=1,
+        project_name="Test project",
+        groups={},
+        participants={"participants": {"1": raw}, "labels": {"sex": {}}},
+        questions={"questions": {}},
+    )
+    cache = ProjectCache()
+    scoutnet_forms_decoder([project], cache)
+    return cache.projects[1].participants[raw["member_no"]]
+
+
+def test_ist_with_stale_troop_answers_gets_no_troop():
+    # An IST member who was once a Deltagare or Ledare keeps their old
+    # Avdelning answers in Scoutnet. They must not land in that troop.
+    raw = _raw_participant(questions={"84942": "57999", "88168": "17", "107592": "18"})
+    assert _decode(raw)["troop"] == ""
+
+
+def test_troop_is_read_from_the_member_types_own_question():
+    deltagare = _raw_participant(questions={"84942": "58000", "88168": "17", "107592": "18"})
+    leader = _raw_participant(questions={"90951": "62319", "88168": "17", "107592": "18"})
+    assert _decode(deltagare)["troop"] == "17"
+    assert _decode(leader)["troop"] == "18"
