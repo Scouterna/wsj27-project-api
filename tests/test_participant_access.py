@@ -138,7 +138,7 @@ def test_a_plain_participants_minted_roles_grant_nothing():
 
 # --- The endpoints ------------------------------------------------------------
 
-# Two participants in different troops, an IST member, and a CMT member with no troop. Health
+# Two participants in different troops, plus a CMT member with no troop. Health
 # answers live in forms_data, which is the field the levels are about.
 PARTICIPANTS = {
     1000018: {
@@ -168,12 +168,13 @@ PARTICIPANTS = {
         "contact_info": {"Anhörig": "Dag's wife"},
         "forms_data": {"Hälsa": {"Allergier": "Skaldjur"}},
     },
-    # IST troop 18 - a numbering of its own, nothing to do with participant
-    # troop 18 or Dag, its leader.
+    # IST patrol 18 - a group of adults numbered on its own, no troop and
+    # nothing to do with troop 18 or Dag, its leader.
     1000918: {
         "member_no": 1000918,
-        "name": "Ivo Ist18",
-        "troop": "18",
+        "name": "Ivo Ist",
+        "troop": "",
+        "patrol": "18",
         "member_type": "IST",
         "email": "ivo@example.org",
         "contact_info": {"Anhörig": "Ivo's sister"},
@@ -524,18 +525,12 @@ def test_a_leader_sets_the_patrol_of_their_own_troop(client, writes):
     assert response.status_code == 200
     assert response.json() == {"patrol": "Falken"}
     assert writes == [(1000018, {"patrol": "Falken"})]
+    assert client.project.participants[1000018]["patrol"] == "Falken"  # no refresh needed
 
 
 def test_a_leader_cannot_reach_into_another_troop(client, writes):
     """404, not 403: the refusal must not confirm that member exists."""
     response = client.as_user(LEADER_18).post("/participants/1000019/patrol", json={"patrol": "Falken"})
-
-    assert response.status_code == 404
-    assert writes == []
-
-
-def test_a_leader_cannot_set_the_patrol_of_an_ist_member_with_their_troop_number(client, writes):
-    response = client.as_user(LEADER_18).post("/participants/1000918/patrol", json={"patrol": "Falken"})
 
     assert response.status_code == 404
     assert writes == []
@@ -643,46 +638,24 @@ def test_a_scoutnet_failure_is_reported_as_a_bad_gateway(client, monkeypatch):
     assert response.status_code == 502
 
 
-# --- IST troops ---------------------------------------------------------------
+# --- IST patrols --------------------------------------------------------------
 #
-# IST troops share the Avdelning questions with participant troops but not the
-# numbering, so IST troop 18 must never show up in, or be reachable through,
-# participant troop 18.
+# An IST member's Avdelning answer is their patrol, never a troop, so a leader
+# of the participant troop with the same number must not reach them.
 
 
-def test_a_troop_listing_leaves_out_ist_by_default(client):
-    for roles in ([LEADER_18], [CMT_HEALTH]):
-        rows = _by_name(client.as_user(*roles).get("/participants/troopinfo/18?infolevel=full"))
-        assert set(rows) == {"Ada Troop18", "Dag Ledare18"}
+def test_an_ist_patrol_does_not_join_the_troop_with_its_number(client):
+    rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18"))
+    assert "Ivo Ist" not in rows
+    assert client.as_user(LEADER_18).get("/participants/individual/1000918").status_code == 404
 
 
-def test_an_ist_troop_is_listed_on_request(client):
-    response = client.as_user(CMT_PROGRAM).get("/participants/troopinfo/18?member_type=IST")
-    assert response.status_code == 200
-    rows = _by_name(response)
-    assert set(rows) == {"Ivo Ist18"}
-    assert rows["Ivo Ist18"]["troop"] == "18"
-    assert "forms_data" not in rows["Ivo Ist18"]
-
-
-def test_both_numberings_together_are_told_apart_by_member_type(client):
-    response = client.as_user(CMT_PROGRAM).get(
-        "/participants/troopinfo/18?infolevel=name&member_type=Deltagare&member_type=IST"
-    )
-    assert {r["name"]: r["member_type"] for r in response.json()} == {"Ada Troop18": "Deltagare", "Ivo Ist18": "IST"}
-
-
-@pytest.mark.parametrize("query", ["member_type=IST", "member_type=Deltagare&member_type=IST"])
-def test_a_participant_troop_leader_cannot_read_the_ist_troop_with_the_same_number(client, query):
-    response = client.as_user(LEADER_18, HEALTH_ACCESS).get(f"/participants/troopinfo/18?{query}")
+def test_a_leader_cannot_set_the_patrol_of_an_ist_member(client, writes):
+    response = client.as_user(LEADER_18).post("/participants/1000918/patrol", json={"patrol": "Falken"})
     assert response.status_code == 404
+    assert writes == []
 
 
-def test_a_participant_troop_leader_cannot_read_an_ist_member(client):
-    response = client.as_user(LEADER_18).get("/participants/individual/1000918")
-    assert response.status_code == 404
-
-
-def test_member_type_is_refused_on_a_member_type_listing(client):
-    response = client.as_user(CMT_PROGRAM).get("/participants/troopinfo/ist?member_type=IST")
-    assert response.status_code == 400
+def test_the_ist_listing_carries_their_patrol(client):
+    rows = _by_name(client.as_user(CMT_PROGRAM).get("/participants/troopinfo/ist"))
+    assert rows["Ivo Ist"]["patrol"] == "18"

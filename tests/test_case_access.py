@@ -204,17 +204,10 @@ def test_extra_access_cannot_be_changed_and_is_left_out_of_the_docs(db_calls):
 
 
 def _project():
-    return SimpleNamespace(
-        participants={
-            1000018: {"troop": "18", "member_type": "Deltagare"},
-            1000019: {"troop": "19", "member_type": "Deltagare"},
-            1000918: {"troop": "18", "member_type": "IST"},  # IST group 18, not troop 18
-        }
-    )
+    return SimpleNamespace(participants={1000018: {"troop": "18"}, 1000019: {"troop": "19"}})
 
 
-# another troop, nobody, an IST member whose group shares the troop's number
-@pytest.mark.parametrize("about_person_id", [1000019, 9999999, 1000918])
+@pytest.mark.parametrize("about_person_id", [1000019, 9999999])  # another troop, nobody
 def test_a_leader_cannot_file_a_troop_case_about_someone_outside_it(about_person_id, monkeypatch, db_calls):
     monkeypatch.setattr(case_module, "get_single_project", _project)
     body = {**BODY, "type": "avdelning", "about_person_id": about_person_id}

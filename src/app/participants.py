@@ -13,12 +13,6 @@ own.
 
 Both can be true of one person, and then each rule applies where it applies.
 
-IST members carry a `troop` too, but an IST "avdelning" is a group of adults
-with no troop leaders, numbered on its own: IST troop 2 has nothing to do with
-participant troop 2 or its leaders. So a leader's troop grant only ever applies
-to Deltagare and Avdelningsledare (`leader_troop()`), an IST troop is read only
-with the contingent-wide grant, and only when asked for by `?member_type=IST`.
-
 Two rules cut across the levels, both about adults' own records. A participant
 who is themselves an Avdelningsledare keeps their contact_info and forms_data
 out of every response except to Kontingentledning with health authorisation — a
@@ -48,11 +42,6 @@ logger = logging.getLogger(__name__)
 InfoLevel = Literal["name", "basic", "full"]
 
 TROOP_MAPPER = {"cmt": "Kontingentledning", "al": "Avdelningsledare", "ist": "IST"}
-
-# Who a numbered troop listing can hold. IST is opt-in: their troops are a
-# numbering of their own, see `leader_troop()`.
-TroopMemberType = Literal["Deltagare", "Avdelningsledare", "IST"]
-PARTICIPANT_TROOP_TYPES: tuple[TroopMemberType, ...] = ("Deltagare", "Avdelningsledare")
 
 # Ordered, so `granted < required` is the whole check. A name is participant
 # data like any other, hence the same cost as basic: someone with no access to a
@@ -150,16 +139,6 @@ def _withheld(user: AuthUser) -> dict[str, set[str]]:
     return withheld
 
 
-def leader_troop(participant: dict[str, Any]) -> str | None:
-    """The troop whose leaders may reach this participant, if any.
-
-    An IST member's `troop` is an IST group, which has no leaders and shares
-    only its number with the participant troop of the same name, so it must
-    never be handed to `_troop_access()` as a leader's troop.
-    """
-    return participant["troop"] if participant["member_type"] in PARTICIPANT_TROOP_TYPES else None
-
-
 def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[str, set[str]]) -> dict[str, Any]:
     """One participant cut down to `infolevel`, always as a new dict.
 
@@ -196,36 +175,21 @@ router = APIRouter()
 async def troopinfo(
     troop_id: str,
     infolevel: InfoLevel = Query("basic"),
-    member_type: list[TroopMemberType] | None = Query(
-        None, description="For a numbered troop: which member types to list. Default Deltagare and Avdelningsledare."
-    ),
     user: AuthUser = Depends(require_auth_user),
 ):
     """Every participant in one troop, or in one member type."""
     troop_id = TROOP_MAPPER.get(troop_id, troop_id)
-    if member_type and not troop_id.isdigit():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="member_type applies to a numbered troop only.",
-        )
-    types = set(member_type or PARTICIPANT_TROOP_TYPES)
 
     # Authorised before the lookup, so an unauthorised caller gets the same
-    # answer whether or not the troop exists. Only a numbered participant troop
-    # can be a leader's own; a member-type listing or an IST troop is nobody's
-    # troop, hence None. Asking for both parts needs access to both.
-    not_found = "Troop not found in project."
-    if not troop_id.isdigit():
-        _authorize(user, None, infolevel, f"troop {troop_id}", not_found)
-    else:
-        if types & set(PARTICIPANT_TROOP_TYPES):
-            _authorize(user, troop_id, infolevel, f"troop {troop_id}", not_found)
-        if "IST" in types:
-            _authorize(user, None, infolevel, f"IST troop {troop_id}", not_found)
+    # answer whether or not the troop exists. Only a numbered troop can be a
+    # leader's own; a member-type listing is nobody's troop, hence None.
+    _authorize(
+        user, troop_id if troop_id.isdigit() else None, infolevel, f"troop {troop_id}", "Troop not found in project."
+    )
 
     pdata = get_single_project()
     if troop_id.isdigit():
-        tinfo = [p for p in pdata.participants.values() if p["member_type"] in types and p["troop"] == troop_id]
+        tinfo = [p for p in pdata.participants.values() if p["troop"] == troop_id]
     elif troop_id != "Deltagare":
         tinfo = [p for p in pdata.participants.values() if p["member_type"] == troop_id]
     else:
@@ -263,7 +227,7 @@ async def individualinfo(
 
     # The participant's own troop is what decides this, so unlike troopinfo the
     # lookup has to come first. Same 404 detail as above, for the same reason.
-    _authorize(user, leader_troop(meminfo), infolevel, f"member {member_id}", NOT_FOUND)
+    _authorize(user, meminfo["troop"], infolevel, f"member {member_id}", NOT_FOUND)
 
     if infolevel == "name":
         # Narrower than "name" elsewhere: the caller asked by member number, so
@@ -290,13 +254,18 @@ async def set_patrol(
     to troop 17 and nothing else.
     """
     meminfo = get_single_project().participants.get(member_id)
-    if not meminfo or leader_troop(meminfo) not in user.role_suffixes("wsj27:al"):
+    if not meminfo or meminfo["troop"] not in user.role_suffixes("wsj27:al"):
         logger.warning("Denied %s patrol write to member %s", user, member_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
 
     logger.info("%s set patrol %r for member %s", user, update.patrol, member_id)
     try:
-        return await scoutnet_db.set_values(member_id, {"patrol": update.patrol or None})
+        stored = await scoutnet_db.set_values(member_id, {"patrol": update.patrol or None})
     except scoutnet_db.ScoutnetDbError as exc:
         logger.error("Patrol write for member %s failed: %s", member_id, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc
+
+    # Only after Scoutnet has committed, so the record's `patrol` shows the
+    # change at once rather than at the next Scoutnet refresh.
+    meminfo["patrol"] = update.patrol or ""
+    return stored

@@ -236,15 +236,11 @@ def scoutnet_forms_decoder(
         "73868": "Hälsa plus intern information",
         "73660": "Avdelningsledare",
     }
-    # Which question holds the troop, per applicant type. Kontingentledning
-    # have none. IST have had one since 2026-10, but an IST "avdelning" is a
-    # group of adults with no troop leaders, numbered on its own: IST troop 2
-    # is not participant troop 2. member_type tells the two apart, and every
-    # troop-scoped grant in participants.py checks it.
+    # Which question holds the troop: only Deltagare and Avdelningsledare
+    # belong to one. IST and Kontingentledning never have a troop.
     troop_question_map = {
-        "Deltagare": ("88168",),
-        "Avdelningsledare": ("107592",),
-        "IST": ("107592", "88168"),
+        "Deltagare": "88168",
+        "Avdelningsledare": "107592",
     }
     # Which question holds the travel package, per applicant type: Deltagandetyp,
     # Funktionärstyp and "Med rundresa eller direktresa" all ask the same thing
@@ -290,9 +286,9 @@ def scoutnet_forms_decoder(
             logger.error("No application type found for member %s", p["member_no"])
         if not (member_type := application_type_map.get(application_type, "")):
             logger.error("Application type %s not found in map", application_type)
-        # Only from the questions for the member's own type, like the travel
-        # package below: a member who changed type can leave a stale answer.
-        troop = next((p["questions"][q] for q in troop_question_map.get(member_type, ()) if p["questions"].get(q)), "")
+        # Only from the question for the member's own type, like the travel
+        # package below, so an IST member's Avdelning answer never lands here.
+        troop = p["questions"].get(troop_question_map.get(member_type, "")) or ""
 
         # Left empty when unanswered, which is normal: Kontingentledning are not
         # asked for a travel package at all (all 59 of them in the 2026-09 data).
@@ -320,6 +316,16 @@ def scoutnet_forms_decoder(
         # they are - consumers read them from here.
         stored = scoutnet_db.stored_for(p["questions"], member_no, member_type)
 
+        # The patrol, top-level so readers need not know where it is kept. For
+        # now that is the troop leader's stored value (POST /{id}/patrol), until
+        # a Scoutnet question of its own replaces it. IST have no troop or
+        # troop leaders, but since 2026-10 their Avdelning answer holds their
+        # IST patrol - a group of adults numbered on its own - so it is moved
+        # here instead of into `troop`.
+        patrol = stored.get("patrol") or ""
+        if member_type == "IST":
+            patrol = p["questions"].get("107592") or p["questions"].get("88168") or patrol
+
         # access_level is only ever an input to the wsj27:access:<level> role,
         # never read on its own - mint the role here, once, rather than
         # storing access_level for roles.py to turn into one on every request.
@@ -345,6 +351,7 @@ def scoutnet_forms_decoder(
             "participation_type": participation_type,
             "roles": roles,
             "troop": troop,
+            "patrol": patrol,
             # Basic access: contact details, kept out of the health-gated block.
             "contact_info": contact_info,
             "forms_data": forms_data,

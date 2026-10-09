@@ -25,7 +25,7 @@ a finished product. Expect rough edges and breaking changes.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Health check, no auth. |
-| `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. For a numbered troop, `?member_type=` picks who (default `Deltagare` and `Avdelningsledare`; `IST` lists the IST troop with that number). |
+| `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. |
 | `GET /participants/individual/{member_id}` | A single participant. |
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
 | `GET /scoutnet/refresh` | Force a Scoutnet cache refresh. |
@@ -54,11 +54,10 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
-IST members have a `troop` too, but an IST "avdelning" is a group of adults with
-no troop leaders, numbered on its own: IST troop 18 has nothing to do with
-participant troop 18. `member_type` tells them apart. A leader's troop grant
-never reaches an IST member, and an IST troop is listed only on request
-(`?member_type=IST`) and only to the CMT.
+Only Deltagare and Avdelningsledare have a `troop`. An IST member's Avdelning
+answer is their IST patrol (a group of adults with no troop leaders, numbered on
+its own), so it goes in `patrol` instead and no troop's leaders reach them. For
+everyone else `patrol` is the value their troop leader set.
 
 Two rules cut across the table, both about adults' own records, and both drop
 fields from the response rather than refusing it — a listing mixes both kinds of

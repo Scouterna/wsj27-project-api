@@ -40,7 +40,6 @@ from pydantic import BaseModel, Field
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
 from .db import db_execute, db_fetch, db_fetchrow, db_transaction
-from .participants import leader_troop
 from .scoutnet import get_single_project
 
 settings = get_settings()
@@ -256,10 +255,8 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
     if case.type == "avdelning" and case.about_person_id is not None:
         # Same answer for someone missing and someone in another troop, so a
         # leader cannot use this to find out who is in the contingent.
-        # leader_troop(), not troop: an IST group shares only its number with
-        # the participant troop of that name.
         person = get_single_project().participants.get(case.about_person_id)
-        if not person or leader_troop(person) != case.troop:
+        if not person or person["troop"] != case.troop:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Member {case.about_person_id} is not in troop {case.troop}",

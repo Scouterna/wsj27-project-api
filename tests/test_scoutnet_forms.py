@@ -90,10 +90,25 @@ def _decode(raw: dict) -> dict:
 
 
 @pytest.mark.parametrize("question", ["88168", "107592"])
-def test_an_ist_members_avdelning_is_their_troop(question):
-    # Their own IST group, told apart from participant troop 17 by member_type.
+def test_an_ist_members_avdelning_is_their_patrol_not_a_troop(question):
+    # An IST "avdelning" is a group of adults with no troop leaders, numbered
+    # on its own, so it must never put them in the participant troop 17.
     partdata = _decode(_raw_participant(questions={"84942": "57999", question: "17"}))
-    assert (partdata["member_type"], partdata["troop"]) == ("IST", "17")
+    assert (partdata["troop"], partdata["patrol"]) == ("", "17")
+
+
+def test_a_participants_patrol_is_the_leaders_stored_value(monkeypatch):
+    import json
+
+    from app import scoutnet_db
+
+    monkeypatch.setattr(scoutnet_db.settings, "SCOUTNET_DB_HMAC_KEY", "")
+    stored = json.dumps({"v": 1, "d": {"patrol": "Falken"}})
+    deltagare = _raw_participant(
+        questions={"84942": "58000", "88168": "17", scoutnet_db.QUESTION_IDS["Deltagare"]: stored}
+    )
+    assert (_decode(deltagare)["troop"], _decode(deltagare)["patrol"]) == ("17", "Falken")
+    assert _decode(_raw_participant(questions={"84942": "58000", "88168": "17"}))["patrol"] == ""
 
 
 def test_cmt_gets_no_troop():
