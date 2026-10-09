@@ -4,6 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 
@@ -76,6 +77,9 @@ async def no_cache_headers(request: Request, call_next):
     response.headers["Expires"] = "0"
     return response
 
+
+# Participant listings run to megabytes of JSON with the same keys on every row.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # --- Add metrics API ---
 instrumentator.instrument(app)
