@@ -1,4 +1,4 @@
-"""Participant lookup, at three levels of detail.
+"""Participant lookup, at three levels of detail, and the patrol write.
 
 Every route is gated twice: `require_auth_user` says who is asking, and the
 rules below say how much of the answer they get. "name" and "basic" need basic
@@ -27,10 +27,12 @@ import logging
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
-from .scoutnet import get_single_project
+from .scoutnet import ScoutnetRequestError, get_single_project, set_answer
+from .scoutnet_forms import PATROL_QUESTION
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -54,6 +56,10 @@ REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACC
 CMT_HEALTH_ROLE = "wsj27:cmt:support:halsa"
 INTERNAL_INFO_ROLE = "wsj27:access:Hälsa plus intern information"
 HEALTH_ROLES = frozenset({CMT_HEALTH_ROLE, INTERNAL_INFO_ROLE})
+
+
+class PatrolUpdate(BaseModel):
+    patrol: str | None = Field(None, max_length=100)  # None or "" removes the member's patrol
 
 
 def _troop_access(user: AuthUser, troop: str | None) -> int:
@@ -218,3 +224,47 @@ async def individualinfo(
         return {"name": meminfo["name"]}
 
     return _project(meminfo, infolevel, _withheld(user))
+
+
+@router.post(
+    "/{member_id}/patrol",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    response_description="The member's patrol after the write",
+)
+async def set_patrol(
+    member_id: int,
+    update: PatrolUpdate,
+    user: AuthUser = Depends(require_auth_user),
+):
+    """Set (or clear) one participant's patrol. Only for the leaders of their troop.
+
+    Written straight to Scoutnet's Patrull question, where it can also be edited
+    by hand. Deltagare only: IST patrols are filled in Scoutnet by a job of
+    their own, and leaders do not answer the form Patrull is on.
+
+    `role_suffixes`, not `has_role("wsj27:al")`: a leader of troop 17 may write
+    to troop 17 and nothing else.
+    """
+    meminfo = get_single_project().participants.get(member_id)
+    if (
+        not meminfo
+        or meminfo["member_type"] != "Deltagare"
+        or not meminfo["troop"]
+        or meminfo["troop"] not in user.role_suffixes("wsj27:al")
+    ):
+        logger.warning("Denied %s patrol write to member %s", user, member_id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Participant not found in project.")
+
+    patrol = (update.patrol or "").strip()
+    logger.info("%s set patrol %r for member %s", user, patrol, member_id)
+    try:
+        await set_answer(member_id, PATROL_QUESTION, patrol)
+    except ScoutnetRequestError as exc:
+        logger.error("Patrol write for member %s failed: %s", member_id, exc)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc
+
+    # Only after Scoutnet has committed, so the record's `patrol` shows the
+    # change at once rather than at the next Scoutnet refresh.
+    meminfo["patrol"] = patrol
+    return {"member_no": member_id, "patrol": patrol}

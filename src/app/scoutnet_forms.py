@@ -33,8 +33,11 @@ CITY_FILE = Path(__file__).parent / "members_city.csv"
 # - 73868: Hälsa plus intern information
 # - 73660: Avdelningsledare
 
-# 107592: Avdelning (Ledare)
-# 88168: Avdelning (Deltagare)
+# 107592: Avdelning (form 47115, Ledare and CMT)
+# 88168: Avdelning (form 39188, Deltagare and IST)
+# 120104: Patrull (form 39188, Deltagare and IST)
+
+PATROL_QUESTION = "120104"
 
 
 def _load_templates(qdefs: dict) -> dict:
@@ -303,6 +306,13 @@ def scoutnet_forms_decoder(
         # package below: an IST member who was once a Deltagare or Ledare keeps
         # a stale Avdelning answer, which would put them in that troop.
         troop = p["questions"].get(troop_question_map.get(member_type, "")) or ""
+        # Plain text, a name or a number or both, and taken as it is: troop
+        # leaders set it through this app, but it is also edited in Scoutnet.
+        # IST patrols were first put in Avdelning, so an IST member whose
+        # Patrull is still empty keeps that answer as their patrol.
+        patrol = p["questions"].get(PATROL_QUESTION) or ""
+        if not patrol and member_type == "IST":
+            patrol = p["questions"].get("88168") or ""
 
         # Left empty when unanswered, which is normal: Kontingentledning are not
         # asked for a travel package at all (all 59 of them in the 2026-09 data).
@@ -345,6 +355,7 @@ def scoutnet_forms_decoder(
             "participation_type": participation_type,
             "roles": roles,
             "troop": troop,
+            "patrol": patrol,
             # Basic access: contact details, kept out of the health-gated block.
             "contact_info": contact_info,
             "forms_data": forms_data,

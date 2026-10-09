@@ -19,6 +19,9 @@ class ProjectConfig(BaseModel):
     member_key: str
     question_key: str
     group_key: str = ""  # Optional; empty string = no groups for this project
+    # Key for the /api/project/checkin write endpoint (check-in state and
+    # question answers). Optional; empty string = this project is read-only.
+    update_key: str = ""
 
 
 class Settings(BaseSettings):

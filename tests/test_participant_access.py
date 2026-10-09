@@ -479,3 +479,63 @@ def test_the_internal_information_role_keeps_its_other_grants(client):
     response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/18?infolevel=full")
     assert response.status_code == 200  # a 403 here means the role stopped granting "full"
     assert _by_name(response)["Ada Troop18"]["forms_data"]
+
+
+# --- The patrol write ---------------------------------------------------------
+
+
+@pytest.fixture
+def writes(monkeypatch):
+    """Records each Scoutnet write instead of sending it."""
+    from app import participants as participants_module
+
+    sent = []
+
+    async def fake_set_answer(member_no, question_id, value):
+        sent.append((member_no, question_id, value))
+
+    monkeypatch.setattr(participants_module, "set_answer", fake_set_answer)
+    return sent
+
+
+def test_leader_sets_a_patrol_in_their_own_troop(client, writes):
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": " Älgen "})
+    assert response.status_code == 200
+    assert response.json() == {"member_no": 1000018, "patrol": "Älgen"}
+    assert writes == [(1000018, "120104", "Älgen")]
+    assert client.project.participants[1000018]["patrol"] == "Älgen"
+
+
+def test_clearing_a_patrol_writes_an_empty_answer(client, writes):
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": None})
+    assert response.status_code == 200
+    assert writes == [(1000018, "120104", "")]
+
+
+@pytest.mark.parametrize(
+    ("roles", "member_no"),
+    [
+        ((LEADER_18,), 1000019),  # another troop
+        ((LEADER_18,), 1000180),  # a fellow leader, not a Deltagare
+        ((CMT_HEALTH,), 1000018),  # the CMT reads everyone but sets no patrols
+        ((LEADER_18,), 9999999),  # nobody
+    ],
+)
+def test_nobody_else_sets_a_patrol(client, writes, roles, member_no):
+    response = client.as_user(*roles).post(f"/participants/{member_no}/patrol", json={"patrol": "Älgen"})
+    assert response.status_code == 404
+    assert writes == []
+
+
+def test_a_failed_scoutnet_write_leaves_the_patrol_as_it_was(client, monkeypatch):
+    from app import participants as participants_module
+    from app.scoutnet import ScoutnetRequestError
+
+    async def failing_set_answer(member_no, question_id, value):
+        raise ScoutnetRequestError("Scoutnet rejected the write")
+
+    monkeypatch.setattr(participants_module, "set_answer", failing_set_answer)
+    client.project.participants[1000018]["patrol"] = "Björnen"
+    response = client.as_user(LEADER_18).post("/participants/1000018/patrol", json={"patrol": "Älgen"})
+    assert response.status_code == 502
+    assert client.project.participants[1000018]["patrol"] == "Björnen"

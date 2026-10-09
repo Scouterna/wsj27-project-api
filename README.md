@@ -27,6 +27,7 @@ a finished product. Expect rough edges and breaking changes.
 | `GET /` | Health check, no auth. |
 | `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. |
 | `GET /participants/individual/{member_id}` | A single participant. |
+| `POST /participants/{member_id}/patrol` | Set a participant's patrol, for the leaders of their troop. |
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
 | `GET /scoutnet/refresh` | Force a Scoutnet cache refresh. |
 | `/cases/*` | Case management — only registered when `POSTGRES_DSN` is set. |
@@ -53,6 +54,11 @@ live at the top of `src/app/participants.py`:
 A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
+
+`patrol` is the participant's answer to the Scoutnet question Patrull, as plain
+text. A troop's leaders can set it for the Deltagare in their troop, and the
+write goes straight to Scoutnet. It can also be edited in Scoutnet, which is how
+the IST get theirs.
 
 Two rules cut across the table, both about adults' own records, and both drop
 fields from the response rather than refusing it — a listing mixes both kinds of

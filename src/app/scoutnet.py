@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 PROJECT_API = "https://www.scoutnet.se/api/project/get"
+CHECKIN_API = "https://www.scoutnet.se/api/project/checkin"
 REFRESH_RETRY_MIN = 60  # Seconds to wait after the first failed refresh
 REFRESH_RETRY_MAX = 1800  # Ceiling for the doubling retry delay
 CACHE_DIR = Path(".dev_cache")
@@ -334,6 +335,39 @@ async def _update_project_cache() -> None:
 
 def get_single_project() -> CachedProject:
     return next(iter(_project_cache.projects.values()))
+
+
+async def set_answer(member_no: int, question_id: str, value: str) -> None:
+    """Write one member's answer to one question in Scoutnet. "" clears it.
+
+    Scoutnet checks only that the question belongs to the project, not that it
+    is on the form the member registered on, so picking the right question is
+    up to the caller. Only `questions` is sent: `checked_in` would force
+    attended=1, which cannot be undone through this endpoint.
+    """
+    project = get_single_project()
+    config = next((p for p in settings.SCOUTNET_PROJECTS if p.id == project.project_id), None)
+    if config is None or not config.update_key:
+        raise ScoutnetRequestError(f"Project {project.project_id} has no update_key configured")
+
+    body = {str(member_no): {"questions": {question_id: {"value": value}}}}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as http_client:
+            response = await http_client.put(
+                CHECKIN_API,
+                params={"id": str(project.project_id), "key": config.update_key},
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        raise ScoutnetRequestError(f"Scoutnet write failed: {type(exc).__name__}") from exc
+    if response.status_code != httpx.codes.OK:
+        raise ScoutnetRequestError(f"Scoutnet rejected the write: HTTP {response.status_code}: {response.text[:300]}")
+
+    # An entry of null means the stored value already matched, not a failure.
+    entry = (response.json().get("updated_questions") or {}).get(str(member_no), {}).get(question_id)
+    logger.info(
+        "Question %s for member %s %s", question_id, member_no, "unchanged" if entry is None else entry.get("action")
+    )
 
 
 # --- API routes ---
