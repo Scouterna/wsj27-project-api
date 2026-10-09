@@ -25,7 +25,7 @@ a finished product. Expect rough edges and breaking changes.
 | Endpoint | Purpose |
 |---|---|
 | `GET /` | Health check, no auth. |
-| `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. |
+| `GET /participants/troopinfo/{troop_id}` | Participants in a troop/unit. For a numbered troop, `?member_type=` picks who (default `Deltagare` and `Avdelningsledare`; `IST` lists the IST troop with that number). |
 | `GET /participants/individual/{member_id}` | A single participant. |
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
 | `GET /scoutnet/refresh` | Force a Scoutnet cache refresh. |
@@ -53,6 +53,11 @@ live at the top of `src/app/participants.py`:
 A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
+
+IST troops are numbered on their own: an IST member's troop is in `ist_troop`,
+never `troop`, and IST troop 18 has nothing to do with participant troop 18. An
+IST troop is listed only on request (`?member_type=IST`) and only to the CMT,
+never to a participant troop's leaders.
 
 Two rules cut across the table, both about adults' own records, and both drop
 fields from the response rather than refusing it — a listing mixes both kinds of
