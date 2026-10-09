@@ -173,8 +173,7 @@ PARTICIPANTS = {
     1000918: {
         "member_no": 1000918,
         "name": "Ivo Ist18",
-        "troop": "",
-        "ist_troop": "18",
+        "troop": "18",
         "member_type": "IST",
         "email": "ivo@example.org",
         "contact_info": {"Anhörig": "Ivo's sister"},
@@ -535,6 +534,13 @@ def test_a_leader_cannot_reach_into_another_troop(client, writes):
     assert writes == []
 
 
+def test_a_leader_cannot_set_the_patrol_of_an_ist_member_with_their_troop_number(client, writes):
+    response = client.as_user(LEADER_18).post("/participants/1000918/patrol", json={"patrol": "Falken"})
+
+    assert response.status_code == 404
+    assert writes == []
+
+
 def test_cmt_may_not_set_a_patrol(client, writes):
     """A patrol is the troop's own business."""
     response = client.as_user(CMT_PROGRAM).post("/participants/1000018/patrol", json={"patrol": "Falken"})
@@ -655,7 +661,7 @@ def test_an_ist_troop_is_listed_on_request(client):
     assert response.status_code == 200
     rows = _by_name(response)
     assert set(rows) == {"Ivo Ist18"}
-    assert rows["Ivo Ist18"]["ist_troop"] == "18"
+    assert rows["Ivo Ist18"]["troop"] == "18"
     assert "forms_data" not in rows["Ivo Ist18"]
 
 
