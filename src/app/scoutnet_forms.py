@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 
 from . import scoutnet_db
+from .next_of_kin_emails import apply_profile_emails
 from .roles import STORED_ROLES_KEY, merge_stored_roles, roles_for_participant
 from .scoutnet import CachedProject, ProjectCache, ScoutnetProjectData
 
@@ -267,6 +268,7 @@ def scoutnet_forms_decoder(
     qdefs = project.questions["questions"]  # qid -> definition, both forms merged
     templates = _load_templates(qdefs)
     unmapped: Counter = Counter()  # choice answers that match no option, summarised below
+    profile_emails_used = 0
     logger.debug("Processing %s participants for project %s", len(pdata), project.project_name)
 
     for p in pdata.values():
@@ -288,6 +290,7 @@ def scoutnet_forms_decoder(
             logger.error("Participation type %s not found in map (member %s)", participation_answer, p["member_no"])
 
         forms_data, contact_info = _split_contact(_build_forms_data(p["questions"], qdefs, templates, unmapped))
+        profile_emails_used += apply_profile_emails(contact_info, p["contact_info"])
         # `or`, not a .get() default: Scoutnet stores this key with a null
         # value when unset, and a default only covers a key that is absent.
         access_type = p["questions"].get("110268") or "73658"
@@ -337,6 +340,7 @@ def scoutnet_forms_decoder(
         }
         participants[member_no] = partdata
 
+    logger.info("Took %s next-of-kin e-posts from Scoutnet profiles", profile_emails_used)
     if unmapped:
         logger.warning(
             "Ignored %s untouched-radio markers over %s questions; most common: %s",
