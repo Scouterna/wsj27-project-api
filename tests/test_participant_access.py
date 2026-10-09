@@ -138,7 +138,7 @@ def test_a_plain_participants_minted_roles_grant_nothing():
 
 # --- The endpoints ------------------------------------------------------------
 
-# Two participants in different troops, plus a CMT member with no troop. Health
+# Two participants in different troops, an IST member, and a CMT member with no troop. Health
 # answers live in forms_data, which is the field the levels are about.
 PARTICIPANTS = {
     1000018: {
@@ -167,6 +167,18 @@ PARTICIPANTS = {
         "email": "dag@example.org",
         "contact_info": {"Anhörig": "Dag's wife"},
         "forms_data": {"Hälsa": {"Allergier": "Skaldjur"}},
+    },
+    # IST troop 18 - a numbering of its own, nothing to do with participant
+    # troop 18 or Dag, its leader.
+    1000918: {
+        "member_no": 1000918,
+        "name": "Ivo Ist18",
+        "troop": "",
+        "ist_troop": "18",
+        "member_type": "IST",
+        "email": "ivo@example.org",
+        "contact_info": {"Anhörig": "Ivo's sister"},
+        "forms_data": {"Hälsa": {"Allergier": "Gluten"}},
     },
     1000000: {
         "member_no": 1000000,
@@ -407,7 +419,7 @@ def test_a_leaders_own_record_is_stripped_like_any_other_leaders(client):
 def test_a_leaders_name_level_is_unaffected(client):
     """ "name" never carried either field, so there is nothing for the rule to take."""
     rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=name"))
-    assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18"}
+    assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18", "member_type": "Avdelningsledare"}
 
 
 # --- Kontingentledning's own health answers -----------------------------------
@@ -479,3 +491,48 @@ def test_the_internal_information_role_keeps_its_other_grants(client):
     response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/18?infolevel=full")
     assert response.status_code == 200  # a 403 here means the role stopped granting "full"
     assert _by_name(response)["Ada Troop18"]["forms_data"]
+
+
+# --- IST troops ---------------------------------------------------------------
+#
+# IST troops share the Avdelning questions with participant troops but not the
+# numbering, so IST troop 18 must never show up in, or be reachable through,
+# participant troop 18.
+
+
+def test_a_troop_listing_leaves_out_ist_by_default(client):
+    for roles in ([LEADER_18], [CMT_HEALTH]):
+        rows = _by_name(client.as_user(*roles).get("/participants/troopinfo/18?infolevel=full"))
+        assert set(rows) == {"Ada Troop18", "Dag Ledare18"}
+
+
+def test_an_ist_troop_is_listed_on_request(client):
+    response = client.as_user(CMT_PROGRAM).get("/participants/troopinfo/18?member_type=IST")
+    assert response.status_code == 200
+    rows = _by_name(response)
+    assert set(rows) == {"Ivo Ist18"}
+    assert rows["Ivo Ist18"]["ist_troop"] == "18"
+    assert "forms_data" not in rows["Ivo Ist18"]
+
+
+def test_both_numberings_together_are_told_apart_by_member_type(client):
+    response = client.as_user(CMT_PROGRAM).get(
+        "/participants/troopinfo/18?infolevel=name&member_type=Deltagare&member_type=IST"
+    )
+    assert {r["name"]: r["member_type"] for r in response.json()} == {"Ada Troop18": "Deltagare", "Ivo Ist18": "IST"}
+
+
+@pytest.mark.parametrize("query", ["member_type=IST", "member_type=Deltagare&member_type=IST"])
+def test_a_participant_troop_leader_cannot_read_the_ist_troop_with_the_same_number(client, query):
+    response = client.as_user(LEADER_18, HEALTH_ACCESS).get(f"/participants/troopinfo/18?{query}")
+    assert response.status_code == 404
+
+
+def test_a_participant_troop_leader_cannot_read_an_ist_member(client):
+    response = client.as_user(LEADER_18).get("/participants/individual/1000918")
+    assert response.status_code == 404
+
+
+def test_member_type_is_refused_on_a_member_type_listing(client):
+    response = client.as_user(CMT_PROGRAM).get("/participants/troopinfo/ist?member_type=IST")
+    assert response.status_code == 400

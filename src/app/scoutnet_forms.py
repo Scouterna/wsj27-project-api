@@ -255,7 +255,7 @@ def scoutnet_forms_decoder(
         "Deltagare": "88168",
         "Avdelningsledare": "107592",
     }
-    # Which question holds the travel package, per applicant type:Deltagandetyp,
+    # Which question holds the travel package, per applicant type: Deltagandetyp,
     # Funktionärstyp and "Med rundresa eller direktresa" all ask the same thing
     # of different people. Read the one belonging to the member's own type - a
     # member who changed type mid-application leaves a stale answer behind on
@@ -300,9 +300,15 @@ def scoutnet_forms_decoder(
         if not (member_type := application_type_map.get(application_type, "")):
             logger.error("Application type %s not found in map", application_type)
         # Only from the question for the member's own type, like the travel
-        # package below: an IST member who was once a Deltagare or Ledare keeps
-        # a stale Avdelning answer, which would put them in that troop.
+        # package below, so an IST member's Avdelning answer never lands here.
         troop = p["questions"].get(troop_question_map.get(member_type, "")) or ""
+        # IST are grouped into IST troops (from 2026-10), answered on the same
+        # Avdelning questions but numbered on their own: IST troop 17 is not
+        # participant troop 17. A field of its own, so that nothing scoped by
+        # `troop` - a leader's own troop, patrols, avdelning cases - reaches them.
+        ist_troop = ""
+        if member_type == "IST":
+            ist_troop = p["questions"].get("107592") or p["questions"].get("88168") or ""
 
         # Left empty when unanswered, which is normal: Kontingentledning are not
         # asked for a travel package at all (all 59 of them in the 2026-09 data).
@@ -345,6 +351,7 @@ def scoutnet_forms_decoder(
             "participation_type": participation_type,
             "roles": roles,
             "troop": troop,
+            "ist_troop": ist_troop,
             # Basic access: contact details, kept out of the health-gated block.
             "contact_info": contact_info,
             "forms_data": forms_data,

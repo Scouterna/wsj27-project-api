@@ -13,6 +13,11 @@ own.
 
 Both can be true of one person, and then each rule applies where it applies.
 
+IST troops are numbered on their own (`ist_troop`, never `troop`), so IST troop
+17 has nothing to do with participant troop 17 or its leaders: an IST troop is
+read only with the contingent-wide grant, and only when asked for by
+`?member_type=IST`.
+
 Two rules cut across the levels, both about adults' own records. A participant
 who is themselves an Avdelningsledare keeps their contact_info and forms_data
 out of every response except to Kontingentledning with health authorisation — a
@@ -38,6 +43,11 @@ logger = logging.getLogger(__name__)
 InfoLevel = Literal["name", "basic", "full"]
 
 TROOP_MAPPER = {"cmt": "Kontingentledning", "al": "Avdelningsledare", "ist": "IST"}
+
+# Who a numbered troop listing can hold. IST is opt-in: their troops are a
+# numbering of their own, see `_troop_of()`.
+TroopMemberType = Literal["Deltagare", "Avdelningsledare", "IST"]
+PARTICIPANT_TROOP_TYPES: tuple[TroopMemberType, ...] = ("Deltagare", "Avdelningsledare")
 
 # Ordered, so `granted < required` is the whole check. A name is participant
 # data like any other, hence the same cost as basic: someone with no access to a
@@ -126,6 +136,17 @@ def _withheld(user: AuthUser) -> dict[str, set[str]]:
     return withheld
 
 
+def _troop_of(participant: dict[str, Any]) -> str:
+    """The troop number a participant is listed under, in their own type's numbering.
+
+    `.get()` because a disk cache written before `ist_troop` existed lacks it
+    until the next Scoutnet refresh.
+    """
+    if participant["member_type"] == "IST":
+        return participant.get("ist_troop", "")
+    return participant["troop"]
+
+
 def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[str, set[str]]) -> dict[str, Any]:
     """One participant cut down to `infolevel`, always as a new dict.
 
@@ -137,7 +158,11 @@ def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[s
     participant and a 403 would take the whole list down over one row.
     """
     if infolevel == "name":
-        return {"member_no": participant["member_no"], "name": participant["name"]}
+        return {
+            "member_no": participant["member_no"],
+            "name": participant["name"],
+            "member_type": participant["member_type"],
+        }
 
     drop = set() if infolevel == "full" else {"forms_data"}
     drop |= withheld.get(participant["member_type"], set())
@@ -158,21 +183,36 @@ router = APIRouter()
 async def troopinfo(
     troop_id: str,
     infolevel: InfoLevel = Query("basic"),
+    member_type: list[TroopMemberType] | None = Query(
+        None, description="For a numbered troop: which member types to list. Default Deltagare and Avdelningsledare."
+    ),
     user: AuthUser = Depends(require_auth_user),
 ):
     """Every participant in one troop, or in one member type."""
     troop_id = TROOP_MAPPER.get(troop_id, troop_id)
+    if member_type and not troop_id.isdigit():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="member_type applies to a numbered troop only.",
+        )
+    types = set(member_type or PARTICIPANT_TROOP_TYPES)
 
     # Authorised before the lookup, so an unauthorised caller gets the same
-    # answer whether or not the troop exists. Only a numbered troop can be a
-    # leader's own; a member-type listing is nobody's troop, hence None.
-    _authorize(
-        user, troop_id if troop_id.isdigit() else None, infolevel, f"troop {troop_id}", "Troop not found in project."
-    )
+    # answer whether or not the troop exists. Only a numbered participant troop
+    # can be a leader's own; a member-type listing or an IST troop is nobody's
+    # troop, hence None. Asking for both parts needs access to both.
+    not_found = "Troop not found in project."
+    if not troop_id.isdigit():
+        _authorize(user, None, infolevel, f"troop {troop_id}", not_found)
+    else:
+        if types & set(PARTICIPANT_TROOP_TYPES):
+            _authorize(user, troop_id, infolevel, f"troop {troop_id}", not_found)
+        if "IST" in types:
+            _authorize(user, None, infolevel, f"IST troop {troop_id}", not_found)
 
     pdata = get_single_project()
     if troop_id.isdigit():
-        tinfo = [p for p in pdata.participants.values() if p["troop"] == troop_id]
+        tinfo = [p for p in pdata.participants.values() if p["member_type"] in types and _troop_of(p) == troop_id]
     elif troop_id != "Deltagare":
         tinfo = [p for p in pdata.participants.values() if p["member_type"] == troop_id]
     else:
