@@ -173,8 +173,7 @@ PARTICIPANTS = {
     1000918: {
         "member_no": 1000918,
         "name": "Ivo Ist18",
-        "troop": "",
-        "ist_troop": "18",
+        "troop": "18",
         "member_type": "IST",
         "email": "ivo@example.org",
         "contact_info": {"Anhörig": "Ivo's sister"},
@@ -511,7 +510,7 @@ def test_an_ist_troop_is_listed_on_request(client):
     assert response.status_code == 200
     rows = _by_name(response)
     assert set(rows) == {"Ivo Ist18"}
-    assert rows["Ivo Ist18"]["ist_troop"] == "18"
+    assert rows["Ivo Ist18"]["troop"] == "18"
     assert "forms_data" not in rows["Ivo Ist18"]
 
 

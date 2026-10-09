@@ -13,10 +13,11 @@ own.
 
 Both can be true of one person, and then each rule applies where it applies.
 
-IST troops are numbered on their own (`ist_troop`, never `troop`), so IST troop
-17 has nothing to do with participant troop 17 or its leaders: an IST troop is
-read only with the contingent-wide grant, and only when asked for by
-`?member_type=IST`.
+IST members carry a `troop` too, but an IST "avdelning" is a group of adults
+with no troop leaders, numbered on its own: IST troop 2 has nothing to do with
+participant troop 2 or its leaders. So a leader's troop grant only ever applies
+to Deltagare and Avdelningsledare (`_leader_troop()`), an IST troop is read only
+with the contingent-wide grant, and only when asked for by `?member_type=IST`.
 
 Two rules cut across the levels, both about adults' own records. A participant
 who is themselves an Avdelningsledare keeps their contact_info and forms_data
@@ -45,7 +46,7 @@ InfoLevel = Literal["name", "basic", "full"]
 TROOP_MAPPER = {"cmt": "Kontingentledning", "al": "Avdelningsledare", "ist": "IST"}
 
 # Who a numbered troop listing can hold. IST is opt-in: their troops are a
-# numbering of their own, see `_troop_of()`.
+# numbering of their own, see `_leader_troop()`.
 TroopMemberType = Literal["Deltagare", "Avdelningsledare", "IST"]
 PARTICIPANT_TROOP_TYPES: tuple[TroopMemberType, ...] = ("Deltagare", "Avdelningsledare")
 
@@ -136,15 +137,14 @@ def _withheld(user: AuthUser) -> dict[str, set[str]]:
     return withheld
 
 
-def _troop_of(participant: dict[str, Any]) -> str:
-    """The troop number a participant is listed under, in their own type's numbering.
+def _leader_troop(participant: dict[str, Any]) -> str | None:
+    """The troop whose leaders may reach this participant, if any.
 
-    `.get()` because a disk cache written before `ist_troop` existed lacks it
-    until the next Scoutnet refresh.
+    An IST member's `troop` is an IST group, which has no leaders and shares
+    only its number with the participant troop of the same name, so it must
+    never be handed to `_troop_access()` as a leader's troop.
     """
-    if participant["member_type"] == "IST":
-        return participant.get("ist_troop", "")
-    return participant["troop"]
+    return participant["troop"] if participant["member_type"] in PARTICIPANT_TROOP_TYPES else None
 
 
 def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[str, set[str]]) -> dict[str, Any]:
@@ -212,7 +212,7 @@ async def troopinfo(
 
     pdata = get_single_project()
     if troop_id.isdigit():
-        tinfo = [p for p in pdata.participants.values() if p["member_type"] in types and _troop_of(p) == troop_id]
+        tinfo = [p for p in pdata.participants.values() if p["member_type"] in types and p["troop"] == troop_id]
     elif troop_id != "Deltagare":
         tinfo = [p for p in pdata.participants.values() if p["member_type"] == troop_id]
     else:
@@ -250,7 +250,7 @@ async def individualinfo(
 
     # The participant's own troop is what decides this, so unlike troopinfo the
     # lookup has to come first. Same 404 detail as above, for the same reason.
-    _authorize(user, meminfo["troop"], infolevel, f"member {member_id}", "Participant not found in project.")
+    _authorize(user, _leader_troop(meminfo), infolevel, f"member {member_id}", "Participant not found in project.")
 
     if infolevel == "name":
         # Narrower than "name" elsewhere: the caller asked by member number, so

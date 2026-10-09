@@ -54,10 +54,11 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
-IST troops are numbered on their own: an IST member's troop is in `ist_troop`,
-never `troop`, and IST troop 18 has nothing to do with participant troop 18. An
-IST troop is listed only on request (`?member_type=IST`) and only to the CMT,
-never to a participant troop's leaders.
+IST members have a `troop` too, but an IST "avdelning" is a group of adults with
+no troop leaders, numbered on its own: IST troop 18 has nothing to do with
+participant troop 18. `member_type` tells them apart. A leader's troop grant
+never reaches an IST member, and an IST troop is listed only on request
+(`?member_type=IST`) and only to the CMT.
 
 Two rules cut across the table, both about adults' own records, and both drop
 fields from the response rather than refusing it — a listing mixes both kinds of

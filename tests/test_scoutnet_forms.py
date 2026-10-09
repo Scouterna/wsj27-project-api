@@ -64,12 +64,14 @@ def _decode(raw: dict) -> dict:
 
 
 @pytest.mark.parametrize("question", ["88168", "107592"])
-def test_an_ist_members_avdelning_is_their_ist_troop_not_a_troop(question):
-    # IST troops are numbered on their own, so an IST member's Avdelning
-    # answer must never put them in the participant troop with that number.
+def test_an_ist_members_avdelning_is_their_troop(question):
+    # Their own IST group, told apart from participant troop 17 by member_type.
     partdata = _decode(_raw_participant(questions={"84942": "57999", question: "17"}))
-    assert partdata["troop"] == ""
-    assert partdata["ist_troop"] == "17"
+    assert (partdata["member_type"], partdata["troop"]) == ("IST", "17")
+
+
+def test_cmt_gets_no_troop():
+    assert _decode(_raw_participant(questions={"90951": "64031", "88168": "17", "107592": "18"}))["troop"] == ""
 
 
 def test_troop_is_read_from_the_member_types_own_question():
@@ -77,4 +79,3 @@ def test_troop_is_read_from_the_member_types_own_question():
     leader = _raw_participant(questions={"90951": "62319", "88168": "17", "107592": "18"})
     assert _decode(deltagare)["troop"] == "17"
     assert _decode(leader)["troop"] == "18"
-    assert _decode(deltagare)["ist_troop"] == _decode(leader)["ist_troop"] == ""
