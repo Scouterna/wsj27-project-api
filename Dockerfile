@@ -1,5 +1,6 @@
-# Use a slim Python image for the application
-FROM python:3.14-slim
+# Use a slim Python image for the application. The official image, from AWS's
+# public mirror: Docker Hub rate-limits the anonymous pulls CI makes (429).
+FROM public.ecr.aws/docker/library/python:3.14-slim
 
 # Install uv as the package manager
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
