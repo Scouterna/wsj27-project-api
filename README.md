@@ -36,8 +36,7 @@ a finished product. Expect rough edges and breaking changes.
 
 Auth follows the same model as the rest of the WSJ27 apps: a
 `wsj27-auth_access-token` cookie or bearer token, validated as a standard JWT
-against wsj27-auth-api's JWKS. Set `AUTH_DISABLED=true` locally to skip this
-(see `.env.example`), and `FAKE_USER_ROLES` to choose who you are while it is.
+against wsj27-auth-api's JWKS.
 
 ## Who may read participant data
 
