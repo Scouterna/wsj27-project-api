@@ -163,6 +163,25 @@ router = APIRouter()
 
 
 @router.get(
+    "/troopinfo",
+    response_model=list,
+    status_code=status.HTTP_200_OK,
+    response_description="Every participant",
+)
+async def allinfo(
+    infolevel: InfoLevel = Query("basic"),
+    user: AuthUser = Depends(require_auth_user),
+):
+    """Every participant in the project, every troop and member type at once."""
+    # The whole contingent is nobody's troop, so only the contingent-wide grant
+    # can open it; a leader gets the 404 a troop that is not theirs gets.
+    _authorize(user, None, infolevel, "all participants", "Troop not found in project.")
+
+    withheld = _withheld(user)
+    return [_project(p, infolevel, withheld) for p in get_single_project().participants.values()]
+
+
+@router.get(
     "/troopinfo/{troop_id}",
     response_model=list,
     status_code=status.HTTP_200_OK,

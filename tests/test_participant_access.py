@@ -290,6 +290,34 @@ def test_member_type_listing_is_cmt_only(client):
     assert client.as_user(LEADER_18).get("/participants/troopinfo/cmt").status_code == 404
 
 
+def test_cmt_reads_every_participant_in_one_request(client):
+    response = client.as_user(CMT_PROGRAM).get("/participants/troopinfo")
+    assert response.status_code == 200
+    assert set(_by_name(response)) == {p["name"] for p in PARTICIPANTS.values()}
+
+
+@pytest.mark.parametrize("roles", [[LEADER_18], [LEADER_18, HEALTH_ACCESS], []])
+def test_the_whole_contingent_is_cmt_only(client, roles):
+    """A leader's troop is not the contingent: the same 404 as a troop that is not theirs."""
+    response = client.as_user(*roles).get("/participants/troopinfo")
+    assert response.status_code == 404
+    assert response.json() == client.as_user(*roles).get("/participants/troopinfo/77").json()
+
+
+def test_the_whole_contingent_keeps_the_levels_and_withheld_fields(client):
+    assert client.as_user(CMT_PROGRAM).get("/participants/troopinfo?infolevel=full").status_code == 403
+
+    basic = _by_name(client.as_user(CMT_PROGRAM).get("/participants/troopinfo?infolevel=basic"))
+    assert "forms_data" not in basic["Ada Troop18"]
+    assert "contact_info" not in basic["Dag Ledare18"]  # a leader's own details
+
+    full = _by_name(client.as_user(CMT_HEALTH).get("/participants/troopinfo?infolevel=full"))
+    assert full["Ada Troop18"]["forms_data"]
+    assert full["Dag Ledare18"]["contact_info"]
+    assert "forms_data" not in full["Cee Cmt"]  # Kontingentledning's own answers
+    assert client.project.participants[1000018]["forms_data"], "the cached record was mutated"
+
+
 def test_basic_does_not_strip_the_cache_for_the_next_caller(client):
     """The regression this refactor exists for.
 
