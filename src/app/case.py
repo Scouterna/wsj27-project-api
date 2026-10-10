@@ -5,7 +5,7 @@ it is closed. It is about one person (`about_person_id`) or, if that is left
 out, about a troop as a whole.
 
 Who may reach a case is decided by its `type`, its `secrecy_level` and its
-`extra_access` list; the rules are spelled out above `_ROLE_SCOPE` below. Each
+`extra_access` list; the rules are spelled out under `CASE_TYPES` below. Each
 type in `CASE_TYPES` names the role it needs, and an `avdelning` case is also
 limited to the leaders of its own troop. A case the caller may not reach answers
 404, the same as one that does not exist. A closed case can be reopened, and
@@ -47,90 +47,84 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # Finite but extendable set of case types, each with the role a caller needs for it.
+# An avdelning case needs the leader role for its own troop: wsj27:al:17 reaches
+# troop 17's cases, and a bare wsj27:al reaches none.
 CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
 
-# Who may see what, by secrecy_level (1-2 are not in use yet):
-#   3  the case type's role holders, and anyone on the case's extra_access
-#   4  the role holders only; the case cannot have extra_access
-#   5  the creator (who must still hold the role), and anyone on extra_access
-# A note's own level only restricts when it is above its case's: a level 4 note
-# is hidden from extra_access (who cannot write one either), a level 5 note is
-# for its author alone.
+# Who reaches a case, by its secrecy_level (1-2 are not in use yet):
+#   3  its role holders, and its grantees (the members on its extra_access)
+#   4  its role holders only; the case cannot have extra_access
+#   5  its creator, while still holding the role, and its grantees
+# Grantees may do what role holders may, except change extra_access or write a
+# level 4 note. A note's own level only matters when it is above its case's: a
+# level 4 note is for role holders alone, a level 5 note for its author alone.
 #
-# The same rules as SQL over `cases c` / `case_notes n`, with $1-$3 from
-# _scope_args(), for the list and tag queries. Keep the two in step.
-_ROLE_SCOPE = (
-    "((c.type = ANY($1) OR (c.type = 'avdelning' AND c.troop = ANY($2)))"
-    " AND (c.secrecy_level < 5 OR c.creator_id = $3))"
-)
-_SCOPE = f"({_ROLE_SCOPE} OR (c.secrecy_level <> 4 AND $3 = ANY(c.extra_access)))"
-_NOTE_SCOPE = (
-    f"(n.secrecy_level <= c.secrecy_level OR (n.secrecy_level = 4 AND {_ROLE_SCOPE})"
-    " OR (n.secrecy_level = 5 AND n.creator_id = $3))"
-)
-
-
-def _troops(user: AuthUser) -> list[str]:
-    return sorted(user.role_suffixes("wsj27:al"))
+# The case and tag lists are filtered with these same functions after the query,
+# not in SQL, so that the rules exist in one place. With a few thousand cases at
+# most, reading the rows a caller cannot see costs little.
 
 
 def _types_for(user: AuthUser) -> list[str]:
+    """The types the user may create cases of. With none, all of /cases is closed to them."""
     return [
         case_type
         for case_type, role in CASE_TYPES.items()
-        if user.has_role(role) and (case_type != "avdelning" or _troops(user))
+        if user.has_role(role) and (case_type != "avdelning" or user.role_suffixes("wsj27:al"))
     ]
 
 
-def _may_access(user: AuthUser, case_type: str, troop: str) -> bool:
-    return case_type in _types_for(user) and (case_type != "avdelning" or troop in _troops(user))
+def _holds_role(user: AuthUser, case_type: str, troop: str) -> bool:
+    """Holds the role that a case of this type, for this troop, needs."""
+    if case_type == "avdelning":
+        return user.has_role(f"wsj27:al:{troop}")
+    return case_type in CASE_TYPES and user.has_role(CASE_TYPES[case_type])
 
 
-def _role_access(user: AuthUser, case) -> bool:
-    """Access through the case type's role rather than extra_access."""
-    if not _may_access(user, case["type"], case["troop"]):
+def _is_role_holder(user: AuthUser, case) -> bool:
+    """Holds the role the case needs. On a level 5 case only its creator counts."""
+    if case["secrecy_level"] == 5 and case["creator_id"] != user.user_id:
         return False
-    return case["secrecy_level"] < 5 or case["creator_id"] == user.user_id
+    return _holds_role(user, case["type"], case["troop"])
 
 
-def _has_access(user: AuthUser, case) -> bool:
-    return _role_access(user, case) or (case["secrecy_level"] != 4 and user.user_id in case["extra_access"])
+def _is_grantee(user: AuthUser, case) -> bool:
+    """On the case's extra_access. A level 4 case has none, even if one slipped in."""
+    return case["secrecy_level"] != 4 and user.user_id in case["extra_access"]
 
 
-def _members_with_access(case) -> list[int]:
-    """Everyone who may reach the case: the participants whose roles do, and its extra_access."""
-    members = {
-        member_no
-        for member_no, info in get_single_project().participants.items()
-        if info.get("roles")
-        and _role_access(AuthUser.model_construct(member_no=str(member_no), roles=info["roles"]), case)
-    }
-    if case["secrecy_level"] != 4:
-        members.update(case["extra_access"])
-    return sorted(members)
+def _reaches(user: AuthUser, case) -> bool:
+    return _is_role_holder(user, case) or _is_grantee(user, case)
 
 
 def _may_read_note(user: AuthUser, case, note) -> bool:
+    """For someone who reaches the case."""
     if note["secrecy_level"] <= case["secrecy_level"]:
         return True
     if note["secrecy_level"] == 4:
-        return _role_access(user, case)
+        return _is_role_holder(user, case)
     return note["creator_id"] == user.user_id
 
 
-def _check_secrecy(secrecy_level: int, extra_access: list[int]) -> None:
-    if secrecy_level < 3:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Secrecy levels 1 and 2 are not in use yet"
-        )
+def _members_with_access(case) -> list[int]:
+    """The participants who can open the case: the two checks every caller meets, run for each of them.
+
+    Those are some case type at all (_require_case_user) and reaching the case
+    (_case), so a grantee whom /cases refuses everything is left out. Roles come
+    from the Scoutnet cache here rather than from a token, so someone whose roles
+    are not in it (a local test user, say) is not listed.
+    """
+    people = [
+        AuthUser.model_construct(member_no=str(member_no), roles=info.get("roles") or [])
+        for member_no, info in get_single_project().participants.items()
+    ]
+    return sorted(person.user_id for person in people if _types_for(person) and _reaches(person, case))
+
+
+def _check_extra_access(secrecy_level: int, extra_access: list[int]) -> None:
     if secrecy_level == 4 and extra_access:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A secrecy level 4 case cannot have extra_access"
         )
-
-
-def _scope_args(user: AuthUser) -> list:
-    return [[t for t in _types_for(user) if t != "avdelning"], _troops(user), user.user_id]
 
 
 async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
@@ -140,9 +134,9 @@ async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> Aut
 
 
 async def _case(case_id: int, user: AuthUser = Depends(_require_case_user)):
-    """The case, if the caller may reach it."""
+    """The case, if the caller reaches it."""
     row = await db_fetchrow("SELECT * FROM cases WHERE id = $1", case_id)
-    if row is None or not _has_access(user, row):
+    if row is None or not _reaches(user, row):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return row
 
@@ -151,13 +145,6 @@ async def _open_case(case=Depends(_case)):
     """The case, if it is also open to changes."""
     if case["closed"]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is closed")
-    return case
-
-
-async def _role_case(case=Depends(_open_case), user: AuthUser = Depends(_require_case_user)):
-    """Like _open_case, but extra_access is not enough: a grantee cannot pass access on."""
-    if not _role_access(user, case):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
     return case
 
 
@@ -242,7 +229,10 @@ class CaseCreate(BaseModel):
     )
     extra_access: list[int] = Field(
         default_factory=list,
-        description="Member IDs given access on top of the case type's roles. Not allowed on level 4.",
+        description=(
+            "Member IDs given access on top of the case type's roles. Not allowed on level 4. "
+            "A member whose roles give no case type at all still cannot open the case."
+        ),
     )
     tags: list[str] = Field(default_factory=list, description="Free-form labels. `GET /cases/tags` lists those in use.")
 
@@ -329,7 +319,7 @@ router = APIRouter(responses={403: {"description": "The caller's roles give no a
 async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_user)):
     if case.type not in CASE_TYPES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid case type: {case.type}")
-    if not _may_access(user, case.type, case.troop):
+    if not _holds_role(user, case.type, case.troop):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"No access to {case.type} cases for {case.troop}"
         )
@@ -342,7 +332,11 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"Member {case.about_person_id} is not in troop {case.troop}",
             )
-    _check_secrecy(case.secrecy_level, case.extra_access)
+    if case.secrecy_level < 3:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Secrecy levels 1 and 2 are not in use yet"
+        )
+    _check_extra_access(case.secrecy_level, case.extra_access)
 
     row = await db_fetchrow(
         """
@@ -383,33 +377,31 @@ async def list_cases(
     include_closed: bool = False,
     user: AuthUser = Depends(_require_case_user),
 ):
-    args = _scope_args(user)
-    conditions = [_SCOPE]
+    args = []
+    conditions = []
 
     if about_person_id is not None:
         args.append(about_person_id)
-        conditions.append(f"c.about_person_id = ${len(args)}")
+        conditions.append(f"about_person_id = ${len(args)}")
     if troop is not None:
         args.append(troop)
-        conditions.append(f"c.troop = ${len(args)}")
+        conditions.append(f"troop = ${len(args)}")
     if type is not None:
         args.append(type)
-        conditions.append(f"c.type = ${len(args)}")
+        conditions.append(f"type = ${len(args)}")
     if not_older_than is not None:
         args.append(not_older_than)
-        conditions.append(f"c.created_at >= ${len(args)}")
+        conditions.append(f"created_at >= ${len(args)}")
     if not include_closed:
-        conditions.append("NOT c.closed")
+        conditions.append("NOT closed")
     if tag is not None:
         args.append(tag)
-        conditions.append(f"c.tags @> ARRAY[${len(args)}]::TEXT[]")
+        conditions.append(f"tags @> ARRAY[${len(args)}]::TEXT[]")
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    rows = await db_fetch(
-        f"SELECT c.* FROM cases c {where_clause} ORDER BY c.created_at DESC",
-        *args,
-    )
-    return [Case(**row) for row in rows]
+    rows = await db_fetch(f"SELECT * FROM cases {where_clause} ORDER BY created_at DESC", *args)
+    # The filters can only narrow the list: which cases the caller reaches is decided here, as for a single case.
+    return [Case(**row) for row in rows if _reaches(user, row)]
 
 
 @router.post(
@@ -495,7 +487,7 @@ async def create_note(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Note secrecy level must be equal or higher than the case's secrecy level",
         )
-    if secrecy_level == 4 and not _role_access(user, case):
+    if secrecy_level == 4 and not _is_role_holder(user, case):
         # Level 4 keeps grantees out; one of them must not slip notes past the others.
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
 
@@ -552,9 +544,10 @@ async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Dep
     status_code=status.HTTP_200_OK,
     summary="List who has access to a case",
     description=(
-        "Member IDs of everyone who may reach the case: those whose roles give "
-        "access at its secrecy level, plus its `extra_access`. These are the "
-        "members the case can be assigned to."
+        "Member IDs of the participants who can open the case: those whose roles "
+        "reach it at its secrecy level, and those on its `extra_access` whose roles "
+        "give them some case type (anyone else is refused all of `/cases`). These "
+        "are the members the case can be assigned to."
     ),
     responses={
         200: {"description": "Member IDs, ascending."},
@@ -578,15 +571,18 @@ async def get_case_access(case=Depends(_case)):
         422: {"description": "The case is secrecy level 4, which cannot have extra_access."},
     },
 )
-async def update_case_extra_access(case_id: int, update: ExtraAccessUpdate, case=Depends(_role_case)):
-    _check_secrecy(case["secrecy_level"], update.extra_access)
+async def update_case_extra_access(
+    case_id: int, update: ExtraAccessUpdate, case=Depends(_open_case), user: AuthUser = Depends(_require_case_user)
+):
+    if not _is_role_holder(user, case):
+        # A grantee must not pass access on.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
+    _check_extra_access(case["secrecy_level"], update.extra_access)
     row = await db_fetchrow(
         "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
         case_id,
         update.extra_access,
     )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)
 
 
@@ -617,8 +613,6 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, case=Depend
         case_id,
         update.assigned_to_id,
     )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)
 
 
@@ -639,8 +633,6 @@ async def update_case_title(case_id: int, update: TitleUpdate, case=Depends(_ope
         case_id,
         update.title,
     )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)
 
 
@@ -662,8 +654,6 @@ async def update_case_tags(case_id: int, update: TagsUpdate, case=Depends(_open_
         case_id,
         update.tags,
     )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
     return Case(**row)
 
 
@@ -695,8 +685,6 @@ async def update_note_tags(
         note_id,
         update.tags,
     )
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
     return Note(**row)
 
 
@@ -709,19 +697,13 @@ async def update_note_tags(
     responses={200: {"description": "All existing tag names."}},
 )
 async def list_tags(user: AuthUser = Depends(_require_case_user)):
-    rows = await db_fetch(
-        f"""
-        SELECT DISTINCT tag FROM (
-            SELECT unnest(c.tags) AS tag FROM cases c WHERE {_SCOPE}
-            UNION
-            SELECT unnest(n.tags) AS tag FROM case_notes n JOIN cases c ON c.id = n.case_id
-            WHERE {_SCOPE} AND {_NOTE_SCOPE}
-        ) all_tags
-        ORDER BY tag
-        """,
-        *_scope_args(user),
+    cases = {row["id"]: row for row in await db_fetch("SELECT * FROM cases") if _reaches(user, row)}
+    notes = await db_fetch(
+        "SELECT case_id, creator_id, secrecy_level, tags FROM case_notes WHERE case_id = ANY($1)", list(cases)
     )
-    return [row["tag"] for row in rows]
+    tags = {tag for case in cases.values() for tag in case["tags"]}
+    tags.update(tag for note in notes if _may_read_note(user, cases[note["case_id"]], note) for tag in note["tags"])
+    return sorted(tags)
 
 
 @router.get(
