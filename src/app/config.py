@@ -61,16 +61,6 @@ class Settings(BaseSettings):
     ROOT_PATH: str = ""
     PORT: int = 8000
     DEBUG: bool = False
-    AUTH_DISABLED: bool = False
-    # --- Fake user used when AUTH_DISABLED is set ---
-    # member_no is derived from preferred_username ("<no>@scoutnet", or the older "scoutnet|<no>").
-    FAKE_USER_PREFERRED_USERNAME: str = "1234567@scoutnet"
-    # Roles are matched case-sensitively, and the ones roles.py mints are
-    # lowercase, so this default has to be too — "wsj27:CMT:Admin" is not the
-    # same role as "wsj27:cmt:admin" and satisfies no check at all. Override to
-    # develop as someone else: add "wsj27:access:Hälsa plus intern information"
-    # for health data, or use ["wsj27:al:18"] to be an Avdelningsledare.
-    FAKE_USER_ROLES: list[str] = ["wsj27:cmt:admin"]
     # --- OIDC server DNS ---
     OIDC_SERVER_PATH: str = ""  # Default is to get the path from the request
     # Drop the Secure attribute so cookies work over plain HTTP locally.

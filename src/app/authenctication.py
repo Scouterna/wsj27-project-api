@@ -205,26 +205,13 @@ async def require_auth_user(request: Request) -> AuthUser:
     """
     token = _extract_token(request)
     if not token:
-        if not settings.AUTH_DISABLED:
-            # Logged, because "no token at all" and "a token we rejected" are the same
-            # 401 to the caller but completely different faults, and only the latter
-            # reaches the warning in decode_access_token(). A burst of these means the
-            # auth cookie lapsed before the browser renewed it -- an expiry race in the
-            # front end, not a bad token -- and without this line the logs cannot say so.
-            logger.info("No token presented for %s %s", request.method, request.url.path)
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-        else:  # Authentication disabled. Return a fake user, configurable via env vars.
-            # "1234567@scoutnet" -> "1234567"; the older "scoutnet|1234567" still works.
-            member_no = settings.FAKE_USER_PREFERRED_USERNAME.removesuffix("@scoutnet").rpartition("|")[2]
-            return AuthUser(
-                name="Fake User",
-                preferred_username=settings.FAKE_USER_PREFERRED_USERNAME,
-                given_name="Fake",
-                family_name="User",
-                email="fake.user@scouterna.se",
-                member_no=member_no,
-                roles=settings.FAKE_USER_ROLES,
-            )
+        # Logged, because "no token at all" and "a token we rejected" are the same
+        # 401 to the caller but completely different faults, and only the latter
+        # reaches the warning in decode_access_token(). A burst of these means the
+        # auth cookie lapsed before the browser renewed it -- an expiry race in the
+        # front end, not a bad token -- and without this line the logs cannot say so.
+        logger.info("No token presented for %s %s", request.method, request.url.path)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
 
     claims = await decode_access_token(token, request)
     roles = _extract_roles(claims)

@@ -51,16 +51,6 @@ if not settings.DEBUG:
 
 logging.info("Starting wsj27-project-api on port %d", settings.PORT)
 
-if settings.AUTH_DISABLED:
-    logging.warning(
-        "!" * 72
-        + "\n"
-        + "!! AUTH_DISABLED=True — JWT validation is BYPASSED. "
-        + "All requests are treated as a fake authenticated user. "
-        + "This must never be set in production. !!\n"
-        + "!" * 72
-    )
-
 try:
     uvicorn.run(
         "app.main:app",
