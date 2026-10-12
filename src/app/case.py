@@ -1,8 +1,10 @@
 """Case management: cases and the notes attached to them.
 
 A case tracks an issue for the contingent through the notes added to it, until
-it is closed. It is about one person (`about_person_id`) or, if that is left
-out, about a troop as a whole.
+it is closed. It is about one person (`about_person_id`), about a troop as a
+whole (`troop`, no person), or about neither, e.g. a broken-down hire car; then
+its title and tags say what it is about. Only an `avdelning` case must name a
+troop, because that is what decides which leaders reach it.
 
 Who may reach a case is decided by its `type`, its `secrecy_level` and its
 `extra_access` list; the rules are spelled out under `CASE_TYPES` below. Each
@@ -223,9 +225,13 @@ class CaseCreate(BaseModel):
     type: str = Field(
         description="One of the values from `GET /cases/types`. Used as a filter in searches and in access control."
     )
-    about_person_id: int | None = Field(None, description="Member ID. Omit for a case about a troop.")
+    about_person_id: int | None = Field(None, description="Member ID. Omit for a case about a troop, or about neither.")
     troop: str = Field(
-        description="Troop number or function name, as a string (e.g. the `<troop>` in the `wsj27:al:<troop>` role)."
+        "",
+        description=(
+            "Troop number or function name, as a string (e.g. the `<troop>` in the `wsj27:al:<troop>` role). "
+            "Required for an `avdelning` case; otherwise a free label, empty when the case belongs to no troop."
+        ),
     )
     extra_access: list[int] = Field(
         default_factory=list,
@@ -303,22 +309,29 @@ router = APIRouter(responses={403: {"description": "The caller's roles give no a
     summary="Create a case",
     description=(
         "Opens a new case. `about_person_id` may be omitted for a case about a "
-        "troop as a whole rather than one person.\n\n"
+        "troop as a whole rather than one person, and both it and `troop` may be "
+        "omitted for a case about something else, e.g. a broken-down hire car; "
+        "the title and tags then say what it is about.\n\n"
         "`troop` is a string and can also hold a function name, e.g., CMT. "
-        "For an `avdelning` case it must be one of the caller's own troops, and "
-        "`about_person_id` must be someone in it."
+        "For an `avdelning` case it is required and must be one of the caller's "
+        "own troops, and `about_person_id` must be someone in it."
     ),
     responses={
         201: {"description": "The created case."},
         403: {"description": "The caller may not create this type of case for this troop."},
         422: {
-            "description": "Unknown `type`, a person outside the troop, secrecy level 1-2, or level 4 with `extra_access`."
+            "description": (
+                "Unknown `type`, an `avdelning` case without a troop, a person outside the troop, "
+                "secrecy level 1-2, or level 4 with `extra_access`."
+            )
         },
     },
 )
 async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_user)):
     if case.type not in CASE_TYPES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid case type: {case.type}")
+    if case.type == "avdelning" and not case.troop:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="An avdelning case needs a troop")
     if not _holds_role(user, case.type, case.troop):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"No access to {case.type} cases for {case.troop}"

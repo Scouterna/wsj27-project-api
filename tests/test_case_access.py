@@ -463,6 +463,21 @@ def test_a_leader_files_troop_cases_only_about_their_own_troop(about_person_id, 
         assert db.calls == []
 
 
+def test_a_case_may_be_about_neither_a_person_nor_a_troop(db):
+    response = _client(CMT_IT).post("/cases", json={"title": "Hire car broke down", "type": "cmt", "tags": ["bil"]})
+    assert response.status_code == 201
+    assert response.json()["about_person_id"] is None
+    assert response.json()["troop"] == ""
+
+
+@pytest.mark.parametrize("body", [{}, {"troop": ""}])
+def test_an_avdelning_case_needs_a_troop(body, db):
+    response = _client(LEADER_18).post("/cases", json={"title": "t", "type": "avdelning"} | body)
+    assert response.status_code == 422
+    assert response.json() == {"detail": "An avdelning case needs a troop"}
+    assert db.calls == []
+
+
 # --- extra_access -------------------------------------------------------------
 
 
