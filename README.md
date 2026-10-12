@@ -54,6 +54,10 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
+`patrol` is the participant's answer to the Scoutnet question Patrull, as plain
+text. It is set in Scoutnet, which is how the IST get theirs; an IST member with
+no Patrull answer yet keeps their Avdelning answer as their patrol.
+
 Two rules cut across the table, both about adults' own records, and both drop
 fields from the response rather than refusing it — a listing mixes both kinds of
 participant, and a 403 would take the whole list down over one row. Neither has
