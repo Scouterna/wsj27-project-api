@@ -28,16 +28,27 @@ tags-as-plain-arrays in project memory for why. `PUT .../extra_access` and
 `PUT .../tags` both replace the whole list; neither merges with what is
 already there.
 
-Notes are immutable once created, apart from their tags — there is no endpoint
-to edit or delete one. `GET /{case_id}/notes` logs the read
-(`case_note_read_log`, one row per call, not deduplicated); every other read,
-including the case listing, does not.
+Notes are immutable once created, apart from their tags and the pictures their
+author attaches — there is no endpoint to edit or delete one. `GET
+/{case_id}/notes` logs the read (`case_note_read_log`, one row per call, not
+deduplicated); every other read, including the case listing and the pictures,
+does not.
+
+An attachment is a picture on a note, readable by whoever may read the note. It
+is re-encoded as JPEG on arrival, which also drops its EXIF (location included),
+and kept as two files under `PERSIST_DIR/attachments`, named by its row id: the
+picture and a thumbnail. Nothing deletes them, as nothing deletes notes or cases.
 """
 
+import asyncio
+import io
 import logging
+import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from .authenctication import AuthUser, require_auth_user
@@ -47,6 +58,10 @@ from .scoutnet import get_single_project
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+ATTACHMENT_DIR = settings.PERSIST_DIR / "attachments"
+# Above twice this, Pillow refuses to decode at all; a 48 MP phone photo is well below.
+Image.MAX_IMAGE_PIXELS = 50_000_000
 
 # Finite but extendable set of case types, each with the role a caller needs for it.
 # An avdelning case needs the leader role for its own troop: wsj27:al:17 reaches
@@ -150,6 +165,42 @@ async def _open_case(case=Depends(_case)):
     return case
 
 
+async def _readable_note(case, note_id: int, user: AuthUser):
+    """The note, if it is on this case and the caller may read it."""
+    note = await db_fetchrow("SELECT * FROM case_notes WHERE id = $2 AND case_id = $1", case["id"], note_id)
+    if note is None or not _may_read_note(user, case, note):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    return note
+
+
+# --- Attachment files ---
+
+
+def _process_picture(data: bytes) -> tuple[bytes, bytes, int, int]:
+    """The picture and its thumbnail as fresh JPEGs, and the picture's size. ValueError if it is no picture."""
+    try:
+        image = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
+        image = ImageOps.exif_transpose(image).convert("RGB")  # upright, before the EXIF is gone
+    except (OSError, Image.DecompressionBombError) as e:
+        raise ValueError(str(e)) from e
+    image.thumbnail((2048, 2048))
+    width, height = image.size
+    picture = io.BytesIO()
+    image.save(picture, "JPEG", quality=85)  # without exif=, nothing of the original's EXIF is written
+    image.thumbnail((320, 320))
+    thumbnail = io.BytesIO()
+    image.save(thumbnail, "JPEG", quality=80)
+    return picture.getvalue(), thumbnail.getvalue(), width, height
+
+
+def _write_attachment(attachment_id: int, picture: bytes, thumbnail: bytes) -> None:
+    ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
+    for name, data in ((f"{attachment_id}.jpg", picture), (f"{attachment_id}.thumb.jpg", thumbnail)):
+        tmp = ATTACHMENT_DIR / f"{name}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, ATTACHMENT_DIR / name)
+
+
 # --- Database functions ---
 
 
@@ -204,6 +255,22 @@ async def db_init_tables() -> None:
         )
     """)
     await db_execute("CREATE INDEX IF NOT EXISTS case_note_read_log_case_id_idx ON case_note_read_log (case_id)")
+
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS case_note_attachments (
+            id            BIGSERIAL    PRIMARY KEY,
+            case_id       BIGINT       NOT NULL REFERENCES cases (id),
+            note_id       BIGINT       NOT NULL REFERENCES case_notes (id),
+            created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            creator_id    BIGINT       NOT NULL,
+            filename      TEXT         NOT NULL,
+            content_type  TEXT         NOT NULL,
+            width         INTEGER      NOT NULL,
+            height        INTEGER      NOT NULL,
+            size          INTEGER      NOT NULL
+        )
+    """)
+    await db_execute("CREATE INDEX IF NOT EXISTS case_note_attachments_note_id_idx ON case_note_attachments (note_id)")
 
     await db_execute("CREATE INDEX IF NOT EXISTS cases_tags_idx      ON cases USING GIN (tags)")
     await db_execute("CREATE INDEX IF NOT EXISTS case_notes_tags_idx ON case_notes USING GIN (tags)")
@@ -286,6 +353,17 @@ class NoteCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class Attachment(BaseModel):
+    id: int
+    created_at: datetime
+    creator_id: int
+    filename: str = Field(description="As uploaded. The stored picture is always a JPEG, whatever this says.")
+    content_type: str
+    width: int = Field(description="Of the stored picture, in pixels; at most 2048 either way.")
+    height: int
+    size: int = Field(description="Of the stored picture, in bytes.")
+
+
 class Note(BaseModel):
     id: int
     case_id: int
@@ -295,6 +373,19 @@ class Note(BaseModel):
     title: str
     note: str
     tags: list[str]
+    attachments: list[Attachment] = Field(
+        default_factory=list,
+        description=(
+            "Pictures, oldest first. Fetch them from `.../attachments/{id}` and `.../attachments/{id}/thumbnail`."
+        ),
+    )
+
+
+async def _with_attachments(notes) -> list[Note]:
+    rows = await db_fetch(
+        "SELECT * FROM case_note_attachments WHERE note_id = ANY($1) ORDER BY id", [note["id"] for note in notes]
+    )
+    return [Note(**note, attachments=[Attachment(**r) for r in rows if r["note_id"] == note["id"]]) for note in notes]
 
 
 # --- API routes ---
@@ -548,7 +639,7 @@ async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Dep
         case_id,
         user.user_id,
     )
-    return [Note(**row) for row in rows if _may_read_note(user, case, row)]
+    return await _with_attachments([row for row in rows if _may_read_note(user, case, row)])
 
 
 @router.get(
@@ -689,16 +780,126 @@ async def update_note_tags(
     case=Depends(_open_case),
     user: AuthUser = Depends(_require_case_user),
 ):
-    note = await db_fetchrow("SELECT * FROM case_notes WHERE id = $2 AND case_id = $1", case_id, note_id)
-    if note is None or not _may_read_note(user, case, note):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    await _readable_note(case, note_id, user)
     row = await db_fetchrow(
         "UPDATE case_notes SET tags = $3 WHERE id = $2 AND case_id = $1 RETURNING *",
         case_id,
         note_id,
         update.tags,
     )
-    return Note(**row)
+    return (await _with_attachments([row]))[0]
+
+
+@router.post(
+    "/{case_id}/notes/{note_id}/attachments",
+    response_model=Attachment,
+    status_code=status.HTTP_201_CREATED,
+    summary="Attach a picture to a note",
+    description=(
+        "Multipart upload of one JPEG, PNG or WebP picture in the field `file`, at most 20 MB, up to 10 per note. "
+        "Only the note's author may attach, and only while the case is open. The picture is stored as a JPEG of "
+        "at most 2048 pixels either way, with a thumbnail of at most 320, and without its EXIF data (location "
+        "included)."
+    ),
+    responses={
+        201: {"description": "The stored picture."},
+        403: {"description": "The caller did not write this note."},
+        404: {"description": "No case or note with this id that the caller may read."},
+        409: {"description": "The case is closed, or the note already has 10 pictures."},
+        413: {"description": "Larger than 20 MB."},
+        422: {"description": "Not a JPEG, PNG or WebP picture."},
+    },
+)
+async def add_attachment(
+    case_id: int,
+    note_id: int,
+    file: UploadFile,
+    case=Depends(_open_case),
+    user: AuthUser = Depends(_require_case_user),
+):
+    note = await _readable_note(case, note_id, user)
+    if note["creator_id"] != user.user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the note's author may attach to it")
+    data = await file.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Larger than 20 MB")
+    if (await db_fetchrow("SELECT count(*) FROM case_note_attachments WHERE note_id = $1", note_id))[0] >= 10:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A note can have at most 10 pictures")
+    try:
+        picture, thumbnail, width, height = await asyncio.to_thread(_process_picture, data)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Only JPEG, PNG and WebP pictures can be attached"
+        )
+
+    # The files are written before the row commits, so a failed write leaves no row pointing at nothing.
+    async with db_transaction() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO case_note_attachments (case_id, note_id, creator_id, filename, content_type, width, height, size)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+            """,
+            case_id,
+            note_id,
+            user.user_id,
+            file.filename or "",
+            "image/jpeg",
+            width,
+            height,
+            len(picture),
+        )
+        await asyncio.to_thread(_write_attachment, row["id"], picture, thumbnail)
+        return Attachment(**row)
+
+
+async def _attachment_file(case, note_id: int, attachment_id: int, user: AuthUser, suffix: str) -> FileResponse:
+    await _readable_note(case, note_id, user)
+    row = await db_fetchrow(
+        "SELECT * FROM case_note_attachments WHERE note_id = $1 AND id = $2", note_id, attachment_id
+    )
+    path = ATTACHMENT_DIR / f"{attachment_id}{suffix}"
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    if not path.is_file():
+        logger.error(f"Attachment {attachment_id} has a row but no file at {path}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    # A stored picture never changes, so the browser may keep it; `private`, as it is personal data.
+    return FileResponse(
+        path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=31536000, immutable"}
+    )
+
+
+_ATTACHMENT_RESPONSES = {
+    200: {"content": {"image/jpeg": {}}, "description": "The JPEG."},
+    404: {"description": "No case, note or picture with these ids that the caller may read."},
+}
+
+
+@router.get(
+    "/{case_id}/notes/{note_id}/attachments/{attachment_id}",
+    response_class=FileResponse,
+    summary="Get a note's picture",
+    description="For whoever may read the note, also on a closed case. Not logged.",
+    responses=_ATTACHMENT_RESPONSES,
+)
+async def get_attachment(
+    note_id: int, attachment_id: int, case=Depends(_case), user: AuthUser = Depends(_require_case_user)
+):
+    return await _attachment_file(case, note_id, attachment_id, user, ".jpg")
+
+
+@router.get(
+    "/{case_id}/notes/{note_id}/attachments/{attachment_id}/thumbnail",
+    response_class=FileResponse,
+    summary="Get a note's picture as a thumbnail",
+    description="At most 320 pixels either way. For whoever may read the note, also on a closed case.",
+    responses=_ATTACHMENT_RESPONSES,
+)
+async def get_attachment_thumbnail(
+    note_id: int, attachment_id: int, case=Depends(_case), user: AuthUser = Depends(_require_case_user)
+):
+    return await _attachment_file(case, note_id, attachment_id, user, ".thumb.jpg")
 
 
 @router.get(
