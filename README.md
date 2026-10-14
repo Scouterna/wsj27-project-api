@@ -55,6 +55,13 @@ A leader's authority is their troop and stops there: an access role raises how
 much they see of their own troop, never whose records they can reach. Being both
 a leader and in the CMT adds up — full over the own troop, CMT rules elsewhere.
 
+One exception: any leader or CMT member may read the `name` of every adult — an
+`Avdelningsledare` or `Kontingentledning` — by member number or from the `al`
+and `cmt` listings. Those are the people on cases, so Campfire can show who
+created a case, who it is assigned to and who wrote its notes. Leaders' names
+are no secret; young participants' names still stay within their own troop and
+the CMT.
+
 Only Deltagare and Avdelningsledare have a `troop`, so no troop's leaders reach
 the IST. `patrol` is the participant's answer to the Scoutnet question Patrull,
 as plain text. A troop's leaders can set it for the Deltagare in their troop, and

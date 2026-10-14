@@ -13,6 +13,13 @@ own.
 
 Both can be true of one person, and then each rule applies where it applies.
 
+One exception reaches past the troop: either of them may read the *name* of
+any adult — any Avdelningsledare or Kontingentledning, by member number or as
+the member-type listing. Those are the people who create, are assigned to and
+write notes on cases, so a case shared with a leader can show who is on it.
+Leaders' names are no secret: they have all met, and they are all in Discord.
+A young participant's name still goes no further than their own troop and CMT.
+
 Two rules cut across the levels, both about adults' own records. A participant
 who is themselves an Avdelningsledare keeps their contact_info and forms_data
 out of every response except to Kontingentledning with health authorisation — a
@@ -44,7 +51,8 @@ TROOP_MAPPER = {"cmt": "Kontingentledning", "al": "Avdelningsledare", "ist": "IS
 
 # Ordered, so `granted < required` is the whole check. A name is participant
 # data like any other, hence the same cost as basic: someone with no access to a
-# person must not be able to confirm they exist by asking for their name.
+# person must not be able to confirm they exist by asking for their name. Adults
+# are the exception, see ADULT_MEMBER_TYPES.
 NO_ACCESS, BASIC_ACCESS, FULL_ACCESS = 0, 1, 2
 REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACCESS}
 
@@ -57,6 +65,10 @@ REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACC
 CMT_HEALTH_ROLE = "wsj27:cmt:support:halsa"
 INTERNAL_INFO_ROLE = "wsj27:legacy-access:Hälsa plus intern information"
 HEALTH_ROLES = frozenset({CMT_HEALTH_ROLE, INTERNAL_INFO_ROLE})
+
+# Whose name any leader or CMT member may read, wherever they are (#22). Only
+# the name: every other level still follows the troop rules.
+ADULT_MEMBER_TYPES = frozenset({"Avdelningsledare", "Kontingentledning"})
 
 NOT_FOUND = "Participant not found in project."
 
@@ -82,8 +94,18 @@ def _troop_access(user: AuthUser, troop: str | None) -> int:
     return FULL_ACCESS if user.has_any_role(HEALTH_ROLES) else BASIC_ACCESS
 
 
-def _authorize(user: AuthUser, troop: str | None, infolevel: InfoLevel, subject: str, not_found: str) -> None:
+def _authorize(
+    user: AuthUser,
+    troop: str | None,
+    infolevel: InfoLevel,
+    subject: str,
+    not_found: str,
+    member_type: str | None = None,
+) -> None:
     """Raise unless the caller may read `troop` at `infolevel`.
+
+    `member_type` is the participant's, or the listing's, when there is one:
+    an adult's name is open to every leader and CMT member, troop or not.
 
     No access at all is a 404 carrying `not_found` — the same answer a record
     that genuinely is not there gets, so a refusal cannot be used to discover
@@ -92,6 +114,11 @@ def _authorize(user: AuthUser, troop: str | None, infolevel: InfoLevel, subject:
     recorded" from "you may not see them".
     """
     granted = _troop_access(user, troop)
+    # Any troop at all, or CMT. Not `has_role("wsj27")`, which a service account
+    # like wsj27:bulkread would pass.
+    adult_name = infolevel == "name" and member_type in ADULT_MEMBER_TYPES
+    if adult_name and (user.role_suffixes("wsj27:al") or user.has_role("wsj27:cmt")):
+        granted = max(granted, BASIC_ACCESS)
     if granted == NO_ACCESS:
         logger.warning("Denied %s access to %s", user, subject)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found)
@@ -197,8 +224,14 @@ async def troopinfo(
     # Authorised before the lookup, so an unauthorised caller gets the same
     # answer whether or not the troop exists. Only a numbered troop can be a
     # leader's own; a member-type listing is nobody's troop, hence None.
+    is_troop = troop_id.isdigit()
     _authorize(
-        user, troop_id if troop_id.isdigit() else None, infolevel, f"troop {troop_id}", "Troop not found in project."
+        user,
+        troop_id if is_troop else None,
+        infolevel,
+        f"troop {troop_id}",
+        "Troop not found in project.",
+        member_type=None if is_troop else troop_id,
     )
 
     pdata = get_single_project()
@@ -241,7 +274,7 @@ async def individualinfo(
 
     # The participant's own troop is what decides this, so unlike troopinfo the
     # lookup has to come first. Same 404 detail as above, for the same reason.
-    _authorize(user, meminfo["troop"], infolevel, f"member {member_id}", NOT_FOUND)
+    _authorize(user, meminfo["troop"], infolevel, f"member {member_id}", NOT_FOUND, meminfo["member_type"])
 
     if infolevel == "name":
         # Narrower than "name" elsewhere: the caller asked by member number, so

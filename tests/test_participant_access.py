@@ -19,6 +19,7 @@ from app.authenctication import AuthUser, require_auth_user
 from app.participants import BASIC_ACCESS, FULL_ACCESS, NO_ACCESS, _troop_access
 
 LEADER_18 = "wsj27:al:18"
+LEADER_19 = "wsj27:al:19"
 CMT_PROGRAM = "wsj27:cmt:program:medlem"
 CMT_HEALTH = "wsj27:cmt:support:halsa"
 HEALTH_ACCESS = "wsj27:legacy-access:Hälsa plus intern information"
@@ -354,7 +355,7 @@ def test_individual_refuses_full_without_health(client):
 
 
 def test_individual_name_level_needs_basic_access(client):
-    """A name is participant data: a caller with no access to someone gets 404, not a name."""
+    """A young participant's name is participant data: no access to them is a 404, not a name."""
     assert client.as_user(CMT_PROGRAM).get("/participants/individual/1000018?infolevel=name").json() == {
         "name": "Ada Troop18"
     }
@@ -450,6 +451,50 @@ def test_a_leaders_name_level_is_unaffected(client):
     """ "name" never carried either field, so there is nothing for the rule to take."""
     rows = _by_name(client.as_user(LEADER_18).get("/participants/troopinfo/18?infolevel=name"))
     assert rows["Dag Ledare18"] == {"member_no": 1000180, "name": "Dag Ledare18"}
+
+
+# --- Adults' names are open to every leader and CMT member (#22) --------------
+#
+# So a case shared with a leader can name the CMT members and the leaders from
+# other troops on it. The name only: every other level, and every young
+# participant, still follows the troop rules above.
+
+
+@pytest.mark.parametrize(("member_no", "name"), [(1000180, "Dag Ledare18"), (1000000, "Cee Cmt")])
+def test_a_leader_reads_any_adults_name(client, member_no, name):
+    response = client.as_user(LEADER_19).get(f"/participants/individual/{member_no}?infolevel=name")
+    assert response.status_code == 200
+    assert response.json() == {"name": name}
+
+
+@pytest.mark.parametrize("infolevel", ["basic", "full"])
+def test_an_adult_outside_the_troop_is_still_a_name_and_nothing_more(client, infolevel):
+    """Any level past the name looks exactly like a missing record, as before."""
+    leader = client.as_user(LEADER_19)
+    exists = leader.get(f"/participants/individual/1000180?infolevel={infolevel}")
+    missing = leader.get(f"/participants/individual/9999999?infolevel={infolevel}")
+    assert exists.status_code == missing.status_code == 404
+    assert exists.json() == missing.json()
+
+
+@pytest.mark.parametrize(("listing", "names"), [("al", {"Dag Ledare18"}), ("cmt", {"Cee Cmt"})])
+def test_a_leader_lists_the_adults_by_name(client, listing, names):
+    response = client.as_user(LEADER_19).get(f"/participants/troopinfo/{listing}?infolevel=name")
+    assert response.status_code == 200
+    assert set(_by_name(response)) == names
+    assert all(set(row) == {"member_no", "name"} for row in response.json())
+
+
+def test_the_ist_listing_stays_cmt_only(client):
+    assert client.as_user(LEADER_19).get("/participants/troopinfo/ist?infolevel=name").status_code == 404
+
+
+@pytest.mark.parametrize("roles", [(), ("wsj27:bulkread",), ("wsj27:al",)])
+def test_adults_names_need_a_troop_or_cmt(client, roles):
+    """A service account, or a leader role naming no troop, is not a leader or CMT member."""
+    caller = client.as_user(*roles)
+    assert caller.get("/participants/individual/1000180?infolevel=name").status_code == 404
+    assert caller.get("/participants/troopinfo/al?infolevel=name").status_code == 404
 
 
 # --- Kontingentledning's own health answers -----------------------------------
