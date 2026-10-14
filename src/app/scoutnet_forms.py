@@ -33,10 +33,11 @@ TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
 # 88168: Avdelning (form 39188, Deltagare and IST)
 # 120104: Patrull (form 39188, Deltagare and IST)
 
+# 120008: CMT funktionstillhörighet och roll (form 47115), "<Funktion> | <Roll>".
+#         Hidden from the form: only project admins see and edit it. See roles.py.
+
 # 119951: Postadress (form 39188)
 # 119950: Postadress (form 47115)
-
-PATROL_QUESTION = "120104"
 
 
 def _load_templates(qdefs: dict) -> dict:
@@ -296,7 +297,7 @@ def scoutnet_forms_decoder(
         # leaders set it through this app, but it is also edited in Scoutnet.
         # IST patrols were first put in Avdelning, so an IST member whose
         # Patrull is still empty keeps that answer as their patrol.
-        patrol = p["questions"].get(PATROL_QUESTION) or ""
+        patrol = p["questions"].get("120104") or ""
         if not patrol and member_type == "IST":
             patrol = p["questions"].get("88168") or ""
 
@@ -332,7 +333,13 @@ def scoutnet_forms_decoder(
         # Assigned roles are merged in too, so `roles` is complete on its own.
         roles = merge_stored_roles(
             roles_for_participant(
-                {"member_type": member_type, "troop": troop, "member_no": member_no, "access_level": access_level}
+                {
+                    "member_type": member_type,
+                    "troop": troop,
+                    "member_no": member_no,
+                    "access_level": access_level,
+                    "cmt_role": p["questions"].get("120008") or "",
+                }
             ),
             stored.get(STORED_ROLES_KEY),
             member_no,

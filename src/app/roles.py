@@ -30,13 +30,11 @@ are pinned against what this module mints by tests/test_participant_access.py.
 
 """
 
-import csv
 import hashlib
 import json
 import logging
 import re
 import unicodedata
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
@@ -44,10 +42,8 @@ from pydantic import BaseModel, Field
 
 from . import scoutnet_db
 from .authenctication import AuthUser, require_auth_user
-from .config import get_settings
 from .scoutnet import get_single_project
 
-settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # --- Role model ---------------------------------------------------------------
@@ -80,8 +76,9 @@ NO_ACCESS_LEVELS = {"ingen", ""}
 #
 # CMT members are further split by Funktion (Admin, Program, Support, ...) and
 # Roll (FA, Medlem, Avdelningssupport, ...), giving "wsj27:cmt:<funktion>:<roll>".
-# That split is not in Scoutnet, so it comes from a CSV mounted at
-# CMT_ROLES_FILE; see load_cmt_roles().
+# Both come from Scoutnet question 120008, a field only project admins see and
+# edit, holding "<Funktion> | <Roll>" as plain labels, e.g. "Support | Hälsa PL".
+# The separator is "|" because a Roll can contain "/" ("FA/CET").
 #
 # A Roll can carry a trailing "PL" (Platsledare - the coordinator within that
 # Roll, e.g. "Hälsa PL"): _drop_pl_suffix() merges it into the plain Roll, so
@@ -89,15 +86,8 @@ NO_ACCESS_LEVELS = {"ingen", ""}
 # coordination title, not (yet) its own authorization scope - if that changes,
 # it belongs as a fifth path segment (wsj27:cmt:<funktion>:<roll>:<pl>), not
 # folded away here.
-#
-# member_no -> (funktion, roll), both already slugified. Populated by
-# load_cmt_roles() at startup; empty until then, and empty is a valid state.
-# Keyed by int to match CachedProject.participants.
-_cmt_details: dict[int, tuple[str, str]] = {}
 
-CSV_MEMBER_NO = "Medlemsnummer"
-CSV_FUNKTION = "Funktion"
-CSV_ROLL = "Roll"
+CMT_ROLE_SEPARATOR = "|"
 
 # Matches only a trailing, whitespace-separated "PL" - "Hälsa PL" and
 # "IST-support PL", not "PL Food house", where PL is part of the title itself
@@ -124,66 +114,18 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", folded.lower()).strip("-")
 
 
-def load_cmt_roles(path: Path | None = None) -> int:
-    """Read the CMT Funktion/Roll CSV into memory. Returns the number of rows kept.
-
-    Called once at startup. Rows without a member number are skipped: the CSV is
-    also a working document for humans, and people who have not yet been matched
-    to a Scoutnet account appear in it with the number column blank. They are the
-    same rows that have a blank Roll, so there is nothing to grant them anyway.
-
-    Every failure here is logged and swallowed rather than raised. A missing or
-    malformed file must not take the service down — it degrades to plain
-    "wsj27:cmt" for everyone, which is exactly what was served before this file
-    existed.
-    """
-    path = path or settings.CMT_ROLES_FILE
-    if path is None:
-        logger.info("CMT_ROLES_FILE not set; CMT members get the plain %s:%s role", ROLE_NAMESPACE, ROLE_CMT)
-        _cmt_details.clear()
-        return 0
-
-    try:
-        with Path(path).open(encoding="utf-8-sig", newline="") as fh:
-            rows = list(csv.DictReader(fh))
-    except OSError as exc:
-        logger.warning("Could not read CMT roles from %s: %s", path, exc)
-        return len(_cmt_details)
-
-    details: dict[int, tuple[str, str]] = {}
-    for row in rows:
-        raw_member_no = (row.get(CSV_MEMBER_NO) or "").strip()
-        if not raw_member_no:
-            continue  # Not yet matched to a Scoutnet member; nothing to key on.
-        try:
-            member_no = int(raw_member_no)
-        except ValueError:
-            # Hand-maintained file; a typo in the number column should cost that
-            # one person their detail role, not everyone else theirs.
-            logger.warning("CMT roles: %r is not a member number; skipping row", raw_member_no)
-            continue
-        funktion = _slug(row.get(CSV_FUNKTION) or "")
-        roll = _slug(_drop_pl_suffix(row.get(CSV_ROLL) or ""))
-        if not funktion:
-            logger.warning("CMT roles: member %s has no %s; skipping", member_no, CSV_FUNKTION)
-            continue
-        details[member_no] = (funktion, roll)
-
-    _cmt_details.clear()
-    _cmt_details.update(details)
-    logger.info("Loaded CMT Funktion/Roll for %d members from %s", len(details), path)
-    return len(details)
-
-
-def _cmt_role(member_no: int) -> str:
-    """The CMT role for one member, as specific as the CSV allows.
+def _cmt_role(value: str) -> str:
+    """The CMT role for one member's "<Funktion> | <Roll>", as specific as it allows.
 
     Falls back through "wsj27:cmt:<funktion>" to a plain "wsj27:cmt" rather than
-    granting nothing, so a member missing from the CSV keeps the access they had
-    before the file was introduced.
+    granting nothing, so a member whose field is still empty gets the access every
+    CMT member has. The field is edited by hand, so spacing around the "|" is
+    not significant.
     """
     base = f"{ROLE_NAMESPACE}:{ROLE_CMT}"
-    funktion, roll = _cmt_details.get(member_no, ("", ""))
+    funktion, _, roll = value.partition(CMT_ROLE_SEPARATOR)
+    funktion = _slug(funktion)
+    roll = _slug(_drop_pl_suffix(roll.strip()))
     if not funktion:
         return base
     return f"{base}:{funktion}:{roll}" if roll else f"{base}:{funktion}"
@@ -199,8 +141,8 @@ def roles_for_participant(info: dict[str, Any]) -> list[str]:
       * `Avdelningsledare` gets `wsj27:al:<troop>` — the troop is part of
         the role because a leader's authority is scoped to their own troop.
       * `Kontingentledning` gets `wsj27:cmt:<funktion>:<roll>`, e.g.
-        `wsj27:cmt:support:avdelningssupport`. Funktion and Roll come from the
-        CSV at CMT_ROLES_FILE, not from Scoutnet; a member missing from it
+        `wsj27:cmt:support:avdelningssupport`. Funktion and Roll come from
+        `cmt_role`, the member's Scoutnet question 120008; an empty one
         falls back to plain `wsj27:cmt`. A trailing "PL" on Roll is dropped
         (see _drop_pl_suffix), so "Hälsa PL" and "Hälsa" mint the same role.
       * `access_level` becomes `wsj27:legacy-access:<level>` unless it is
@@ -226,7 +168,7 @@ def roles_for_participant(info: dict[str, Any]) -> list[str]:
             # say so, because it is a data problem rather than a normal state.
             logger.warning("Participant is %s but has no troop; granting no leader role", MEMBER_TYPE_LEADER)
     elif member_type == MEMBER_TYPE_CMT:
-        roles.append(_cmt_role(info.get("member_no")))
+        roles.append(_cmt_role(str(info.get("cmt_role") or "")))
     else:
         # Not a role-bearing member type: no roles, and no access role either.
         return []

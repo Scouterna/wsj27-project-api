@@ -32,7 +32,6 @@ from pydantic import BaseModel, Field
 from .authenctication import AuthUser, require_auth_user
 from .config import get_settings
 from .scoutnet import ScoutnetRequestError, get_single_project, set_answer
-from .scoutnet_forms import PATROL_QUESTION
 
 # --- Settings and data classes ---
 
@@ -285,7 +284,7 @@ async def set_patrol(
     patrol = (update.patrol or "").strip()
     logger.info("%s set patrol %r for member %s", user, patrol, member_id)
     try:
-        await set_answer(member_id, PATROL_QUESTION, patrol)
+        await set_answer(member_id, "120104", patrol)
     except ScoutnetRequestError as exc:
         logger.error("Patrol write for member %s failed: %s", member_id, exc)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not store in Scoutnet.") from exc
