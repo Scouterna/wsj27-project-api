@@ -44,12 +44,6 @@ class Settings(BaseSettings):
     # settled down (autumn 2026).
     SCOUTNET_REFRESH_INTERVAL_HOURS: int = Field(default=1, ge=1, le=24)
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
-    # --- CMT detail roles ---
-    # CSV mapping member number -> CMT function and role, mounted from a
-    # ConfigMap rather than baked into the image so it can change without a
-    # rebuild. Unset (or a missing file) means CMT members just get the plain
-    # wsj27:cmt role, as they did before this file existed.
-    CMT_ROLES_FILE: Path | None = None
     # --- Database ---
     # Optional: unset means no database. The app then starts without a
     # connection and drops the /cases router, which is the only feature that

@@ -76,9 +76,9 @@ def test_string_prefix_is_not_a_role_prefix(held, required):
 def test_a_deeper_requirement_is_not_satisfied_by_a_shallower_role():
     """The transitional CMT state, stated as a rule.
 
-    A member not yet in the mapping CSV holds plain "wsj27:cmt": enough for a
-    two-part check, not enough for a four-part one. Broad access now, specific
-    access once the CSV catches up.
+    A member whose Funktion/Roll is not yet set in Scoutnet holds plain
+    "wsj27:cmt": enough for a two-part check, not enough for a four-part one.
+    Broad access now, specific access once the field is filled in.
     """
     assert has_role(["wsj27:cmt"], "wsj27:cmt")
     assert not has_role(["wsj27:cmt"], "wsj27:cmt:admin:it")

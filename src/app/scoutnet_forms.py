@@ -31,7 +31,8 @@ TEMPLATE_FILE = Path(__file__).parent / "forms_template.json"
 # 88168: Avdelning (form 39188, Deltagare and IST)
 # 120104: Patrull (form 39188, Deltagare and IST)
 
-PATROL_QUESTION = "120104"
+# 120008: CMT funktionstillhörighet och roll (form 47115), "<Funktion> | <Roll>".
+#         Hidden from the form: only project admins see and edit it. See roles.py.
 
 # 119951: Postadress (form 39188)
 # 119950: Postadress (form 47115)
@@ -294,7 +295,7 @@ def scoutnet_forms_decoder(
         # edited in Scoutnet, by hand or by script. IST patrols were first put
         # in Avdelning, so an IST member whose Patrull is still empty keeps that
         # answer as their patrol.
-        patrol = p["questions"].get(PATROL_QUESTION) or ""
+        patrol = p["questions"].get("120104") or ""
         if not patrol and member_type == "IST":
             patrol = p["questions"].get("88168") or ""
 
@@ -323,7 +324,13 @@ def scoutnet_forms_decoder(
         # never read on its own - mint the role here, once, rather than
         # storing access_level for roles.py to turn into one on every request.
         roles = roles_for_participant(
-            {"member_type": member_type, "troop": troop, "member_no": member_no, "access_level": access_level}
+            {
+                "member_type": member_type,
+                "troop": troop,
+                "member_no": member_no,
+                "access_level": access_level,
+                "cmt_role": p["questions"].get("120008") or "",
+            }
         )
 
         partdata = {  # Save som basic data that is quick to filter on

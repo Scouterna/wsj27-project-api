@@ -15,7 +15,6 @@ from .case import router as case_router
 from .config import get_settings
 from .db import close_db_connection, connect_to_db, db_configured
 from .participants import router as participants_router
-from .roles import load_cmt_roles
 from .roles import router as roles_router
 from .scoutnet import router as scoutnet_router
 from .scoutnet import scoutnet_init, scoutnet_shutdown
@@ -42,7 +41,6 @@ async def lifespan(app: FastAPI):
     await connect_to_db()
     if db_configured():
         await db_init_tables()
-    load_cmt_roles()  # CMT Funktion/Roll detail, before any role is minted
     await scoutnet_init()  # Fetch Scoutnet project data
 
     try:

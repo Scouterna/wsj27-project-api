@@ -49,7 +49,7 @@ def _user(*roles: str) -> AuthUser:
         # Kontingentledning: the whole contingent, health only when granted.
         ([CMT_PROGRAM], "18", BASIC_ACCESS),
         ([CMT_PROGRAM], None, BASIC_ACCESS),
-        (["wsj27:cmt"], "18", BASIC_ACCESS),  # not yet in the Funktion/Roll CSV
+        (["wsj27:cmt"], "18", BASIC_ACCESS),  # Funktion/Roll not set yet
         ([CMT_HEALTH], "18", FULL_ACCESS),
         ([CMT_PROGRAM, HEALTH_ACCESS], "18", FULL_ACCESS),  # health by access role
         # Neither group.
@@ -107,7 +107,7 @@ def test_a_participant_with_no_troop_is_reachable_only_contingent_wide():
 
 
 def test_the_cmt_health_role_is_what_roles_py_would_mint():
-    """`wsj27:cmt:support:halsa` is a literal here but built there, from a CSV.
+    """`wsj27:cmt:support:halsa` is a literal here but built there, from Scoutnet.
 
     The Funktion/Roll segments are slugified — "Hälsa" loses its accent — while
     the access role beside it keeps its Swedish sentence verbatim. Getting that

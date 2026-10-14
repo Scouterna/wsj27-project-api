@@ -41,9 +41,9 @@ def test_decoder_stores_minted_roles_instead_of_access_level():
     scoutnet_forms_decoder([project], cache)
 
     partdata = cache.projects[1].participants[1000000]
-    # No CMT Funktion/Roll CSV loaded in this test, so this member falls back
-    # to the plain wsj27:cmt role - the same fallback roles_for_participant()
-    # applies when a member is missing from the CSV.
+    # No answer to 120008, so this member falls back to the plain wsj27:cmt
+    # role - the same fallback roles_for_participant() applies to any CMT
+    # member whose Funktion/Roll is not set yet.
     assert partdata["roles"] == ["wsj27:cmt"]
     assert "access_level" not in partdata
 
@@ -59,6 +59,11 @@ def _decode(raw: dict) -> dict:
     cache = ProjectCache()
     scoutnet_forms_decoder([project], cache)
     return cache.projects[1].participants[raw["member_no"]]
+
+
+def test_cmt_funktion_and_roll_are_read_from_question_120008():
+    raw = _raw_participant(questions={"90951": "64031", "120008": "Support | Hälsa PL"})
+    assert _decode(raw)["roles"] == ["wsj27:cmt:support:halsa"]
 
 
 def test_ist_with_stale_troop_answers_gets_no_troop():

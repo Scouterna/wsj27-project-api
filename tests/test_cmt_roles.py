@@ -1,22 +1,12 @@
-"""CMT Funktion/Roll: loading the CSV, and merging a trailing "PL" into its Roll."""
+"""CMT Funktion/Roll: parsing Scoutnet question 120008, and merging a trailing "PL" into its Roll."""
 
 import pytest
 
-from app import roles
-from app.roles import _drop_pl_suffix, load_cmt_roles, roles_for_participant
+from app.roles import _drop_pl_suffix, roles_for_participant
 
 
-@pytest.fixture(autouse=True)
-def _reset_cmt_details():
-    """Isolate `_cmt_details` from whatever another test file loaded into it.
-
-    load_cmt_roles() always replaces the whole module-level map in one go, so
-    ending on an empty one here can't leak state into tests that run after this
-    file - the next load_cmt_roles() call anywhere just repopulates it fresh.
-    """
-    roles._cmt_details.clear()
-    yield
-    roles._cmt_details.clear()
+def _cmt_roles(value: str) -> list[str]:
+    return roles_for_participant({"member_type": "Kontingentledning", "access_level": "Ingen", "cmt_role": value})
 
 
 @pytest.mark.parametrize(
@@ -35,40 +25,51 @@ def test_drop_pl_suffix(roll, expected):
     assert _drop_pl_suffix(roll) == expected
 
 
-def test_pl_and_plain_roll_mint_the_same_role(tmp_path):
-    """The actual request: someone with "Hälsa PL" and someone with "Hälsa" get
-    an identical role, not two roles that happen to look similar.
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("Support | Avdelningssupport", "wsj27:cmt:support:avdelningssupport"),
+        ("Admin | FA/CET", "wsj27:cmt:admin:fa-cet"),  # why the separator is not "/"
+        ("Support|Avdelningssupport", "wsj27:cmt:support:avdelningssupport"),  # spacing is not significant
+        ("  Support  |  Avdelningssupport  ", "wsj27:cmt:support:avdelningssupport"),
+        ("Admin | Food House", "wsj27:cmt:admin:food-house"),
+        ("Admin | Food house", "wsj27:cmt:admin:food-house"),  # case is not significant either
+        ("Support", "wsj27:cmt:support"),  # Funktion only
+        ("Support |", "wsj27:cmt:support"),
+        ("", "wsj27:cmt"),  # not set yet
+        (" | Hälsa", "wsj27:cmt"),  # a Roll without a Funktion grants nothing more
+    ],
+)
+def test_cmt_role_from_question(value, expected):
+    assert _cmt_roles(value) == [expected]
 
-    Written through the real CSV loader rather than calling _drop_pl_suffix
-    directly, so this also exercises the path a live deployment takes.
-    """
-    csv_path = tmp_path / "cmt-roles.csv"
-    csv_path.write_text(
-        "Medlemsnummer,Funktion,Roll\n1000001,Support,Hälsa\n1000002,Support,Hälsa PL\n",
-        encoding="utf-8",
-    )
-    load_cmt_roles(csv_path)
 
-    plain = roles_for_participant({"member_type": "Kontingentledning", "member_no": 1000001, "access_level": "Ingen"})
-    pl = roles_for_participant({"member_type": "Kontingentledning", "member_no": 1000002, "access_level": "Ingen"})
-    assert plain == pl == ["wsj27:cmt:support:halsa"]
+def test_no_cmt_role_question_means_plain_cmt():
+    assert roles_for_participant({"member_type": "Kontingentledning", "access_level": "Ingen"}) == ["wsj27:cmt"]
 
 
-def test_pl_as_a_title_prefix_is_not_merged_away(tmp_path):
+def test_a_colon_in_the_field_cannot_fake_a_deeper_role():
+    """The field is edited by hand; whatever is typed must stay within its two segments."""
+    assert _cmt_roles("Support:Hälsa | x:y") == ["wsj27:cmt:support-halsa:x-y"]
+
+
+def test_pl_and_plain_roll_mint_the_same_role():
+    """Someone with "Hälsa PL" and someone with "Hälsa" get an identical role,
+    not two roles that happen to look similar."""
+    assert _cmt_roles("Support | Hälsa") == _cmt_roles("Support | Hälsa PL") == ["wsj27:cmt:support:halsa"]
+
+
+def test_pl_as_a_title_prefix_is_not_merged_away():
     """ "PL Food house" is its own title, not "Food house" plus a PL qualifier.
 
     Only a trailing "PL" is a qualifier; the same two letters leading the Roll
     must not collapse it into the base title.
     """
-    csv_path = tmp_path / "cmt-roles.csv"
-    csv_path.write_text(
-        "Medlemsnummer,Funktion,Roll\n1000003,Admin,Food house\n1000004,Admin,PL Food house\n",
-        encoding="utf-8",
-    )
-    load_cmt_roles(csv_path)
+    assert _cmt_roles("Admin | Food house") != _cmt_roles("Admin | PL Food house")
 
-    plain = roles_for_participant({"member_type": "Kontingentledning", "member_no": 1000003, "access_level": "Ingen"})
-    pl_prefixed = roles_for_participant(
-        {"member_type": "Kontingentledning", "member_no": 1000004, "access_level": "Ingen"}
-    )
-    assert plain != pl_prefixed
+
+def test_only_cmt_members_read_the_field():
+    """120008 is on form 47115, so a leader could have a value too; it must not
+    turn them into CMT."""
+    leader = {"member_type": "Avdelningsledare", "troop": "18", "access_level": "Ingen", "cmt_role": "Admin | FA"}
+    assert roles_for_participant(leader) == ["wsj27:al:18"]
