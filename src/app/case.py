@@ -7,7 +7,7 @@ its title and tags say what it is about. Only an `avdelning` case must name a
 troop, because that is what decides which leaders reach it.
 
 Who may reach a case is decided by its `type`, its `secrecy_level` and its
-`extra_access` list; the rules are spelled out under `CASE_TYPES` below. Each
+`extra_access` list; the rules are spelled out at the top of the internal helpers. Each
 type in `CASE_TYPES` names the role it needs, and an `avdelning` case is also
 limited to the leaders of its own troop. A case the caller may not reach answers
 404, the same as one that does not exist. A closed case can be reopened, and
@@ -56,6 +56,8 @@ from .config import get_settings
 from .db import db_execute, db_fetch, db_fetchrow, db_transaction
 from .scoutnet import get_single_project
 
+# --- Settings and data classes ---
+
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
@@ -67,218 +69,6 @@ Image.MAX_IMAGE_PIXELS = 50_000_000
 # An avdelning case needs the leader role for its own troop: wsj27:al:17 reaches
 # troop 17's cases, and a bare wsj27:al reaches none.
 CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
-
-# Who reaches a case, by its secrecy_level (1-2 are not in use yet):
-#   3  its role holders, and its grantees (the members on its extra_access)
-#   4  its role holders only; the case cannot have extra_access
-#   5  its creator, while still holding the role, and its grantees
-# Grantees may do what role holders may, except change extra_access or write a
-# level 4 note. A note's own level only matters when it is above its case's: a
-# level 4 note is for role holders alone, a level 5 note for its author alone.
-#
-# The case and tag lists are filtered with these same functions after the query,
-# not in SQL, so that the rules exist in one place. With a few thousand cases at
-# most, reading the rows a caller cannot see costs little.
-
-
-def _types_for(user: AuthUser) -> list[str]:
-    """The types the user may create cases of. With none, all of /cases is closed to them."""
-    return [
-        case_type
-        for case_type, role in CASE_TYPES.items()
-        if user.has_role(role) and (case_type != "avdelning" or user.role_suffixes("wsj27:al"))
-    ]
-
-
-def _holds_role(user: AuthUser, case_type: str, troop: str) -> bool:
-    """Holds the role that a case of this type, for this troop, needs."""
-    if case_type == "avdelning":
-        return user.has_role(f"wsj27:al:{troop}")
-    return case_type in CASE_TYPES and user.has_role(CASE_TYPES[case_type])
-
-
-def _is_role_holder(user: AuthUser, case) -> bool:
-    """Holds the role the case needs. On a level 5 case only its creator counts."""
-    if case["secrecy_level"] == 5 and case["creator_id"] != user.user_id:
-        return False
-    return _holds_role(user, case["type"], case["troop"])
-
-
-def _is_grantee(user: AuthUser, case) -> bool:
-    """On the case's extra_access. A level 4 case has none, even if one slipped in."""
-    return case["secrecy_level"] != 4 and user.user_id in case["extra_access"]
-
-
-def _reaches(user: AuthUser, case) -> bool:
-    return _is_role_holder(user, case) or _is_grantee(user, case)
-
-
-def _may_read_note(user: AuthUser, case, note) -> bool:
-    """For someone who reaches the case."""
-    if note["secrecy_level"] <= case["secrecy_level"]:
-        return True
-    if note["secrecy_level"] == 4:
-        return _is_role_holder(user, case)
-    return note["creator_id"] == user.user_id
-
-
-def _members_with_access(case) -> list[int]:
-    """The participants who can open the case: the two checks every caller meets, run for each of them.
-
-    Those are some case type at all (_require_case_user) and reaching the case
-    (_case), so a grantee whom /cases refuses everything is left out. Roles come
-    from the Scoutnet cache here rather than from a token, so someone whose roles
-    are not in it (a local test user, say) is not listed.
-    """
-    people = [
-        AuthUser.model_construct(member_no=str(member_no), roles=info.get("roles") or [])
-        for member_no, info in get_single_project().participants.items()
-    ]
-    return sorted(person.user_id for person in people if _types_for(person) and _reaches(person, case))
-
-
-def _check_extra_access(secrecy_level: int, extra_access: list[int]) -> None:
-    if secrecy_level == 4 and extra_access:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A secrecy level 4 case cannot have extra_access"
-        )
-
-
-async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
-    if not _types_for(user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to cases")
-    return user
-
-
-async def _case(case_id: int, user: AuthUser = Depends(_require_case_user)):
-    """The case, if the caller reaches it."""
-    row = await db_fetchrow("SELECT * FROM cases WHERE id = $1", case_id)
-    if row is None or not _reaches(user, row):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
-    return row
-
-
-async def _open_case(case=Depends(_case)):
-    """The case, if it is also open to changes."""
-    if case["closed"]:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is closed")
-    return case
-
-
-async def _readable_note(case, note_id: int, user: AuthUser):
-    """The note, if it is on this case and the caller may read it."""
-    note = await db_fetchrow("SELECT * FROM case_notes WHERE id = $2 AND case_id = $1", case["id"], note_id)
-    if note is None or not _may_read_note(user, case, note):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
-    return note
-
-
-# --- Attachment files ---
-
-
-def _process_picture(data: bytes) -> tuple[bytes, bytes, int, int]:
-    """The picture and its thumbnail as fresh JPEGs, and the picture's size. ValueError if it is no picture."""
-    try:
-        image = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
-        image = ImageOps.exif_transpose(image).convert("RGB")  # upright, before the EXIF is gone
-    except (OSError, Image.DecompressionBombError) as e:
-        raise ValueError(str(e)) from e
-    image.thumbnail((2048, 2048))
-    width, height = image.size
-    picture = io.BytesIO()
-    image.save(picture, "JPEG", quality=85)  # without exif=, nothing of the original's EXIF is written
-    image.thumbnail((320, 320))
-    thumbnail = io.BytesIO()
-    image.save(thumbnail, "JPEG", quality=80)
-    return picture.getvalue(), thumbnail.getvalue(), width, height
-
-
-def _write_attachment(attachment_id: int, picture: bytes, thumbnail: bytes) -> None:
-    ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
-    for name, data in ((f"{attachment_id}.jpg", picture), (f"{attachment_id}.thumb.jpg", thumbnail)):
-        tmp = ATTACHMENT_DIR / f"{name}.tmp"
-        tmp.write_bytes(data)
-        os.replace(tmp, ATTACHMENT_DIR / name)
-
-
-# --- Database functions ---
-
-
-async def db_init_tables() -> None:
-    logger.info("Initializing case database tables")
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS cases (
-            id                BIGSERIAL    PRIMARY KEY,
-            created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-            creator_id        BIGINT       NOT NULL,
-            secrecy_level     SMALLINT     NOT NULL,
-            title             TEXT         NOT NULL,
-            type              TEXT         NOT NULL,
-            about_person_id   BIGINT,
-            assigned_to_id    BIGINT,
-            troop             TEXT         NOT NULL,
-            latest_note_at    TIMESTAMPTZ,
-            closed            BOOLEAN      NOT NULL DEFAULT false,
-            closed_at         TIMESTAMPTZ,
-            closed_by_id      BIGINT,
-            extra_access      BIGINT[]     NOT NULL DEFAULT '{}',
-            tags              TEXT[]       NOT NULL DEFAULT '{}'
-        )
-    """)
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_about_person_idx  ON cases (about_person_id)")
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_assigned_to_idx   ON cases (assigned_to_id)")
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_troop_idx         ON cases (troop)")
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_created_at_idx    ON cases (created_at)")
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_closed_idx        ON cases (closed)")
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_type_idx          ON cases (type)")
-
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS case_notes (
-            id             BIGSERIAL    PRIMARY KEY,
-            case_id        BIGINT       NOT NULL REFERENCES cases (id),
-            created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-            creator_id     BIGINT       NOT NULL,
-            secrecy_level  SMALLINT     NOT NULL,
-            title          TEXT         NOT NULL,
-            note           TEXT         NOT NULL,
-            tags           TEXT[]       NOT NULL DEFAULT '{}'
-        )
-    """)
-    await db_execute("CREATE INDEX IF NOT EXISTS case_notes_case_id_idx ON case_notes (case_id)")
-
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS case_note_read_log (
-            id         BIGSERIAL    PRIMARY KEY,
-            case_id    BIGINT       NOT NULL REFERENCES cases (id),
-            reader_id  BIGINT       NOT NULL,
-            timestamp  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-        )
-    """)
-    await db_execute("CREATE INDEX IF NOT EXISTS case_note_read_log_case_id_idx ON case_note_read_log (case_id)")
-
-    await db_execute("""
-        CREATE TABLE IF NOT EXISTS case_note_attachments (
-            id            BIGSERIAL    PRIMARY KEY,
-            case_id       BIGINT       NOT NULL REFERENCES cases (id),
-            note_id       BIGINT       NOT NULL REFERENCES case_notes (id),
-            created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-            creator_id    BIGINT       NOT NULL,
-            filename      TEXT         NOT NULL,
-            content_type  TEXT         NOT NULL,
-            width         INTEGER      NOT NULL,
-            height        INTEGER      NOT NULL,
-            size          INTEGER      NOT NULL
-        )
-    """)
-    await db_execute("CREATE INDEX IF NOT EXISTS case_note_attachments_note_id_idx ON case_note_attachments (note_id)")
-
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_tags_idx      ON cases USING GIN (tags)")
-    await db_execute("CREATE INDEX IF NOT EXISTS case_notes_tags_idx ON case_notes USING GIN (tags)")
-
-    logger.info("Case database tables ready")
-
-
-# --- Models ---
 
 
 class CaseCreate(BaseModel):
@@ -376,16 +166,405 @@ class Note(BaseModel):
     attachments: list[Attachment] = Field(
         default_factory=list,
         description=(
-            "Pictures, oldest first. Fetch them from `.../attachments/{id}` and `.../attachments/{id}/thumbnail`."
+            "Pictures, oldest first. Fetch each from `.../attachments/{id}`, adding `?thumbnail=true` for its thumbnail."
         ),
     )
 
 
-async def _with_attachments(notes) -> list[Note]:
-    rows = await db_fetch(
-        "SELECT * FROM case_note_attachments WHERE note_id = ANY($1) ORDER BY id", [note["id"] for note in notes]
+# --- Database functions ---
+
+
+async def db_init_tables() -> None:
+    logger.info("Initializing case database tables")
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS cases (
+            id                BIGSERIAL    PRIMARY KEY,
+            created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            creator_id        BIGINT       NOT NULL,
+            secrecy_level     SMALLINT     NOT NULL,
+            title             TEXT         NOT NULL,
+            type              TEXT         NOT NULL,
+            about_person_id   BIGINT,
+            assigned_to_id    BIGINT,
+            troop             TEXT         NOT NULL,
+            latest_note_at    TIMESTAMPTZ,
+            closed            BOOLEAN      NOT NULL DEFAULT false,
+            closed_at         TIMESTAMPTZ,
+            closed_by_id      BIGINT,
+            extra_access      BIGINT[]     NOT NULL DEFAULT '{}',
+            tags              TEXT[]       NOT NULL DEFAULT '{}'
+        )
+    """)
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_about_person_idx  ON cases (about_person_id)")
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_assigned_to_idx   ON cases (assigned_to_id)")
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_troop_idx         ON cases (troop)")
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_created_at_idx    ON cases (created_at)")
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_closed_idx        ON cases (closed)")
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_type_idx          ON cases (type)")
+
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS case_notes (
+            id             BIGSERIAL    PRIMARY KEY,
+            case_id        BIGINT       NOT NULL REFERENCES cases (id),
+            created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            creator_id     BIGINT       NOT NULL,
+            secrecy_level  SMALLINT     NOT NULL,
+            title          TEXT         NOT NULL,
+            note           TEXT         NOT NULL,
+            tags           TEXT[]       NOT NULL DEFAULT '{}'
+        )
+    """)
+    await db_execute("CREATE INDEX IF NOT EXISTS case_notes_case_id_idx ON case_notes (case_id)")
+
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS case_note_read_log (
+            id         BIGSERIAL    PRIMARY KEY,
+            case_id    BIGINT       NOT NULL REFERENCES cases (id),
+            reader_id  BIGINT       NOT NULL,
+            timestamp  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+        )
+    """)
+    await db_execute("CREATE INDEX IF NOT EXISTS case_note_read_log_case_id_idx ON case_note_read_log (case_id)")
+
+    await db_execute("""
+        CREATE TABLE IF NOT EXISTS case_note_attachments (
+            id            BIGSERIAL    PRIMARY KEY,
+            case_id       BIGINT       NOT NULL REFERENCES cases (id),
+            note_id       BIGINT       NOT NULL REFERENCES case_notes (id),
+            created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+            creator_id    BIGINT       NOT NULL,
+            filename      TEXT         NOT NULL,
+            content_type  TEXT         NOT NULL,
+            width         INTEGER      NOT NULL,
+            height        INTEGER      NOT NULL,
+            size          INTEGER      NOT NULL
+        )
+    """)
+    await db_execute("CREATE INDEX IF NOT EXISTS case_note_attachments_note_id_idx ON case_note_attachments (note_id)")
+
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_tags_idx      ON cases USING GIN (tags)")
+    await db_execute("CREATE INDEX IF NOT EXISTS case_notes_tags_idx ON case_notes USING GIN (tags)")
+
+    logger.info("Case database tables ready")
+
+
+# Cases
+
+
+async def db_insert_case(creator_id: int, case: CaseCreate):
+    return await db_fetchrow(
+        """
+        INSERT INTO cases (creator_id, secrecy_level, title, type, about_person_id, troop, extra_access, tags)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+        """,
+        creator_id,
+        case.secrecy_level,
+        case.title,
+        case.type,
+        case.about_person_id,
+        case.troop,
+        case.extra_access,
+        case.tags,
     )
+
+
+async def db_get_case(case_id: int):
+    return await db_fetchrow("SELECT * FROM cases WHERE id = $1", case_id)
+
+
+async def db_list_cases(
+    about_person_id: int | None = None,
+    troop: str | None = None,
+    type: str | None = None,
+    tag: str | None = None,
+    not_older_than: datetime | None = None,
+    include_closed: bool = True,
+):
+    """Newest first, narrowed by whichever filters are given. Says nothing about who may see them."""
+    args = []
+    conditions = []
+
+    if about_person_id is not None:
+        args.append(about_person_id)
+        conditions.append(f"about_person_id = ${len(args)}")
+    if troop is not None:
+        args.append(troop)
+        conditions.append(f"troop = ${len(args)}")
+    if type is not None:
+        args.append(type)
+        conditions.append(f"type = ${len(args)}")
+    if not_older_than is not None:
+        args.append(not_older_than)
+        conditions.append(f"created_at >= ${len(args)}")
+    if not include_closed:
+        conditions.append("NOT closed")
+    if tag is not None:
+        args.append(tag)
+        conditions.append(f"tags @> ARRAY[${len(args)}]::TEXT[]")
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    return await db_fetch(f"SELECT * FROM cases {where_clause} ORDER BY created_at DESC", *args)
+
+
+async def db_update_case(case_id: int, column: str, value):
+    """Set one column. `column` always comes from the code, never from the request."""
+    return await db_fetchrow(f"UPDATE cases SET {column} = $2 WHERE id = $1 RETURNING *", case_id, value)
+
+
+async def db_close_case(case_id: int, closed_by_id: int):
+    """None if it was closed already."""
+    return await db_fetchrow(
+        """
+        UPDATE cases
+        SET closed = true, closed_at = NOW(), closed_by_id = $2
+        WHERE id = $1 AND NOT closed
+        RETURNING *
+        """,
+        case_id,
+        closed_by_id,
+    )
+
+
+async def db_reopen_case(case_id: int):
+    """None if it was open already."""
+    return await db_fetchrow(
+        """
+        UPDATE cases
+        SET closed = false, closed_at = NULL, closed_by_id = NULL
+        WHERE id = $1 AND closed
+        RETURNING *
+        """,
+        case_id,
+    )
+
+
+# Notes
+
+
+async def db_insert_note(case_id: int, creator_id: int, secrecy_level: int, note: NoteCreate):
+    """Also moves the case's latest_note_at to the new note."""
+    async with db_transaction() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO case_notes (case_id, creator_id, secrecy_level, title, note, tags)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            case_id,
+            creator_id,
+            secrecy_level,
+            note.title,
+            note.note,
+            note.tags,
+        )
+        await conn.execute("UPDATE cases SET latest_note_at = $2 WHERE id = $1", case_id, row["created_at"])
+        return row
+
+
+async def db_get_note(case_id: int, note_id: int):
+    return await db_fetchrow("SELECT * FROM case_notes WHERE case_id = $1 AND id = $2", case_id, note_id)
+
+
+async def db_list_notes(case_ids: list[int]):
+    """The notes of these cases, newest first."""
+    return await db_fetch("SELECT * FROM case_notes WHERE case_id = ANY($1) ORDER BY created_at DESC", case_ids)
+
+
+async def db_update_note_tags(case_id: int, note_id: int, tags: list[str]):
+    return await db_fetchrow(
+        "UPDATE case_notes SET tags = $3 WHERE case_id = $1 AND id = $2 RETURNING *", case_id, note_id, tags
+    )
+
+
+async def db_log_note_read(case_id: int, reader_id: int) -> None:
+    await db_execute("INSERT INTO case_note_read_log (case_id, reader_id) VALUES ($1, $2)", case_id, reader_id)
+
+
+# Attachments
+
+
+async def db_insert_attachment(
+    case_id: int,
+    note_id: int,
+    creator_id: int,
+    filename: str,
+    width: int,
+    height: int,
+    picture: bytes,
+    thumbnail: bytes,
+):
+    """The row and its two files. The files are written before the row commits, so a failed write leaves no row."""
+    async with db_transaction() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO case_note_attachments (case_id, note_id, creator_id, filename, content_type, width, height, size)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+            """,
+            case_id,
+            note_id,
+            creator_id,
+            filename,
+            "image/jpeg",
+            width,
+            height,
+            len(picture),
+        )
+        await asyncio.to_thread(_write_attachment, row["id"], picture, thumbnail)
+        return row
+
+
+async def db_get_attachment(note_id: int, attachment_id: int):
+    return await db_fetchrow(
+        "SELECT * FROM case_note_attachments WHERE note_id = $1 AND id = $2", note_id, attachment_id
+    )
+
+
+async def db_list_attachments(note_ids: list[int]):
+    """The attachments of these notes, oldest first."""
+    return await db_fetch("SELECT * FROM case_note_attachments WHERE note_id = ANY($1) ORDER BY id", note_ids)
+
+
+async def db_count_attachments(note_id: int) -> int:
+    return (await db_fetchrow("SELECT count(*) FROM case_note_attachments WHERE note_id = $1", note_id))[0]
+
+
+# --- Internal helpers ---
+
+# Who reaches a case, by its secrecy_level (1-2 are not in use yet):
+#   3  its role holders, and its grantees (the members on its extra_access)
+#   4  its role holders only; the case cannot have extra_access
+#   5  its creator, while still holding the role, and its grantees
+# Grantees may do what role holders may, except change extra_access or write a
+# level 4 note. A note's own level only matters when it is above its case's: a
+# level 4 note is for role holders alone, a level 5 note for its author alone.
+#
+# The case and tag lists are filtered with these same functions after the query,
+# not in SQL, so that the rules exist in one place. With a few thousand cases at
+# most, reading the rows a caller cannot see costs little.
+
+
+def _types_for(user: AuthUser) -> list[str]:
+    """The types the user may create cases of. With none, all of /cases is closed to them."""
+    return [
+        case_type
+        for case_type, role in CASE_TYPES.items()
+        if user.has_role(role) and (case_type != "avdelning" or user.role_suffixes("wsj27:al"))
+    ]
+
+
+def _holds_role(user: AuthUser, case_type: str, troop: str) -> bool:
+    """Holds the role that a case of this type, for this troop, needs."""
+    if case_type == "avdelning":
+        return user.has_role(f"wsj27:al:{troop}")
+    return case_type in CASE_TYPES and user.has_role(CASE_TYPES[case_type])
+
+
+def _is_role_holder(user: AuthUser, case) -> bool:
+    """Holds the role the case needs. On a level 5 case only its creator counts."""
+    if case["secrecy_level"] == 5 and case["creator_id"] != user.user_id:
+        return False
+    return _holds_role(user, case["type"], case["troop"])
+
+
+def _is_grantee(user: AuthUser, case) -> bool:
+    """On the case's extra_access. A level 4 case has none, even if one slipped in."""
+    return case["secrecy_level"] != 4 and user.user_id in case["extra_access"]
+
+
+def _reaches(user: AuthUser, case) -> bool:
+    return _is_role_holder(user, case) or _is_grantee(user, case)
+
+
+def _may_read_note(user: AuthUser, case, note) -> bool:
+    """For someone who reaches the case."""
+    if note["secrecy_level"] <= case["secrecy_level"]:
+        return True
+    if note["secrecy_level"] == 4:
+        return _is_role_holder(user, case)
+    return note["creator_id"] == user.user_id
+
+
+def _members_with_access(case) -> list[int]:
+    """The participants who can open the case: the two checks every caller meets, run for each of them.
+
+    Those are some case type at all (_require_case_user) and reaching the case
+    (_case), so a grantee whom /cases refuses everything is left out. Roles come
+    from the Scoutnet cache here rather than from a token, so someone whose roles
+    are not in it (a local test user, say) is not listed.
+    """
+    people = [
+        AuthUser.model_construct(member_no=str(member_no), roles=info.get("roles") or [])
+        for member_no, info in get_single_project().participants.items()
+    ]
+    return sorted(person.user_id for person in people if _types_for(person) and _reaches(person, case))
+
+
+def _check_extra_access(secrecy_level: int, extra_access: list[int]) -> None:
+    if secrecy_level == 4 and extra_access:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A secrecy level 4 case cannot have extra_access"
+        )
+
+
+async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
+    if not _types_for(user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to cases")
+    return user
+
+
+async def _case(case_id: int, user: AuthUser = Depends(_require_case_user)):
+    """The case, if the caller reaches it."""
+    row = await db_get_case(case_id)
+    if row is None or not _reaches(user, row):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+    return row
+
+
+async def _open_case(case=Depends(_case)):
+    """The case, if it is also open to changes."""
+    if case["closed"]:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is closed")
+    return case
+
+
+async def _readable_note(case, note_id: int, user: AuthUser):
+    """The note, if it is on this case and the caller may read it."""
+    note = await db_get_note(case["id"], note_id)
+    if note is None or not _may_read_note(user, case, note):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Note not found")
+    return note
+
+
+async def _with_attachments(notes) -> list[Note]:
+    rows = await db_list_attachments([note["id"] for note in notes])
     return [Note(**note, attachments=[Attachment(**r) for r in rows if r["note_id"] == note["id"]]) for note in notes]
+
+
+def _process_picture(data: bytes) -> tuple[bytes, bytes, int, int]:
+    """The picture and its thumbnail as fresh JPEGs, and the picture's size. ValueError if it is no picture."""
+    try:
+        image = Image.open(io.BytesIO(data), formats=["JPEG", "PNG", "WEBP"])
+        image = ImageOps.exif_transpose(image).convert("RGB")  # upright, before the EXIF is gone
+    except (OSError, Image.DecompressionBombError) as e:
+        raise ValueError(str(e)) from e
+    image.thumbnail((2048, 2048))
+    width, height = image.size
+    picture = io.BytesIO()
+    image.save(picture, "JPEG", quality=85)  # without exif=, nothing of the original's EXIF is written
+    image.thumbnail((320, 320))
+    thumbnail = io.BytesIO()
+    image.save(thumbnail, "JPEG", quality=80)
+    return picture.getvalue(), thumbnail.getvalue(), width, height
+
+
+def _write_attachment(attachment_id: int, picture: bytes, thumbnail: bytes) -> None:
+    ATTACHMENT_DIR.mkdir(parents=True, exist_ok=True)
+    for name, data in ((f"{attachment_id}.jpg", picture), (f"{attachment_id}.thumb.jpg", thumbnail)):
+        tmp = ATTACHMENT_DIR / f"{name}.tmp"
+        tmp.write_bytes(data)
+        os.replace(tmp, ATTACHMENT_DIR / name)
 
 
 # --- API routes ---
@@ -441,22 +620,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Secrecy levels 1 and 2 are not in use yet"
         )
     _check_extra_access(case.secrecy_level, case.extra_access)
-
-    row = await db_fetchrow(
-        """
-        INSERT INTO cases (creator_id, secrecy_level, title, type, about_person_id, troop, extra_access, tags)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING *
-        """,
-        user.user_id,
-        case.secrecy_level,
-        case.title,
-        case.type,
-        case.about_person_id,
-        case.troop,
-        case.extra_access,
-        case.tags,
-    )
+    row = await db_insert_case(user.user_id, case)
     return Case(**row)
 
 
@@ -481,29 +645,7 @@ async def list_cases(
     include_closed: bool = False,
     user: AuthUser = Depends(_require_case_user),
 ):
-    args = []
-    conditions = []
-
-    if about_person_id is not None:
-        args.append(about_person_id)
-        conditions.append(f"about_person_id = ${len(args)}")
-    if troop is not None:
-        args.append(troop)
-        conditions.append(f"troop = ${len(args)}")
-    if type is not None:
-        args.append(type)
-        conditions.append(f"type = ${len(args)}")
-    if not_older_than is not None:
-        args.append(not_older_than)
-        conditions.append(f"created_at >= ${len(args)}")
-    if not include_closed:
-        conditions.append("NOT closed")
-    if tag is not None:
-        args.append(tag)
-        conditions.append(f"tags @> ARRAY[${len(args)}]::TEXT[]")
-
-    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-    rows = await db_fetch(f"SELECT * FROM cases {where_clause} ORDER BY created_at DESC", *args)
+    rows = await db_list_cases(about_person_id, troop, type, tag, not_older_than, include_closed)
     # The filters can only narrow the list: which cases the caller reaches is decided here, as for a single case.
     return [Case(**row) for row in rows if _reaches(user, row)]
 
@@ -516,21 +658,12 @@ async def list_cases(
     description="Sets `closed`, `closed_at` and `closed_by_id` (to the caller). Closed cases reject new notes.",
     responses={
         200: {"description": "The closed case."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is already closed."},
     },
 )
 async def close_case(case_id: int, case=Depends(_open_case), user: AuthUser = Depends(_require_case_user)):
-    row = await db_fetchrow(
-        """
-        UPDATE cases
-        SET closed = true, closed_at = NOW(), closed_by_id = $2
-        WHERE id = $1 AND NOT closed
-        RETURNING *
-        """,
-        case_id,
-        user.user_id,
-    )
+    row = await db_close_case(case_id, user.user_id)
     if row is None:  # closed since it was looked up
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is closed")
     return Case(**row)
@@ -544,22 +677,14 @@ async def close_case(case_id: int, case=Depends(_open_case), user: AuthUser = De
     description="Clears `closed`, `closed_at` and `closed_by_id`.",
     responses={
         200: {"description": "The reopened case."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is not closed."},
     },
 )
 async def reopen_case(case_id: int, case=Depends(_case)):
     if not case["closed"]:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is not closed")
-    row = await db_fetchrow(
-        """
-        UPDATE cases
-        SET closed = false, closed_at = NULL, closed_by_id = NULL
-        WHERE id = $1 AND closed
-        RETURNING *
-        """,
-        case_id,
-    )
+    row = await db_reopen_case(case_id)
     if row is None:  # reopened since it was looked up
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Case is not closed")
     return Case(**row)
@@ -577,7 +702,8 @@ async def reopen_case(case_id: int, case=Depends(_case)):
     ),
     responses={
         201: {"description": "The created note."},
-        404: {"description": "No case with this id."},
+        403: {"description": "A level 4 note, from someone who is not one of the case type's role holders."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is closed."},
         422: {"description": "The note's secrecy_level is lower than the case's."},
     },
@@ -595,26 +721,8 @@ async def create_note(
         # Level 4 keeps grantees out; one of them must not slip notes past the others.
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
 
-    async with db_transaction() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO case_notes (case_id, creator_id, secrecy_level, title, note, tags)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            RETURNING *
-            """,
-            case_id,
-            user.user_id,
-            secrecy_level,
-            note.title,
-            note.note,
-            note.tags,
-        )
-        await conn.execute(
-            "UPDATE cases SET latest_note_at = $2 WHERE id = $1",
-            case_id,
-            row["created_at"],
-        )
-        return Note(**row)
+    row = await db_insert_note(case_id, user.user_id, secrecy_level, note)
+    return Note(**row)
 
 
 @router.get(
@@ -629,16 +737,12 @@ async def create_note(
     ),
     responses={
         200: {"description": "The case's notes."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
     },
 )
 async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Depends(_require_case_user)):
-    rows = await db_fetch("SELECT * FROM case_notes WHERE case_id = $1 ORDER BY created_at DESC", case_id)
-    await db_execute(
-        "INSERT INTO case_note_read_log (case_id, reader_id) VALUES ($1, $2)",
-        case_id,
-        user.user_id,
-    )
+    rows = await db_list_notes([case_id])
+    await db_log_note_read(case_id, user.user_id)
     return await _with_attachments([row for row in rows if _may_read_note(user, case, row)])
 
 
@@ -655,10 +759,10 @@ async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Dep
     ),
     responses={
         200: {"description": "Member IDs, ascending."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
     },
 )
-async def get_case_access(case=Depends(_case)):
+async def get_case_access(case_id: int, case=Depends(_case)):
     return _members_with_access(case)
 
 
@@ -670,7 +774,8 @@ async def get_case_access(case=Depends(_case)):
     description="Whole-list replace, not a merge — send the complete list of member IDs to grant access.",
     responses={
         200: {"description": "The case with its extra_access list replaced."},
-        404: {"description": "No case with this id."},
+        403: {"description": "The caller is a grantee, not one of the case type's role holders."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is closed."},
         422: {"description": "The case is secrecy level 4, which cannot have extra_access."},
     },
@@ -682,11 +787,7 @@ async def update_case_extra_access(
         # A grantee must not pass access on.
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
     _check_extra_access(case["secrecy_level"], update.extra_access)
-    row = await db_fetchrow(
-        "UPDATE cases SET extra_access = $2 WHERE id = $1 RETURNING *",
-        case_id,
-        update.extra_access,
-    )
+    row = await db_update_case(case_id, "extra_access", update.extra_access)
     return Case(**row)
 
 
@@ -700,7 +801,7 @@ async def update_case_extra_access(
     ),
     responses={
         200: {"description": "The case with its assignee updated."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is closed."},
         422: {"description": "The assignee has no access to the case."},
     },
@@ -712,11 +813,7 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, case=Depend
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Member {update.assigned_to_id} has no access to this case",
         )
-    row = await db_fetchrow(
-        "UPDATE cases SET assigned_to_id = $2 WHERE id = $1 RETURNING *",
-        case_id,
-        update.assigned_to_id,
-    )
+    row = await db_update_case(case_id, "assigned_to_id", update.assigned_to_id)
     return Case(**row)
 
 
@@ -725,18 +822,15 @@ async def update_case_assignee(case_id: int, update: AssigneeUpdate, case=Depend
     response_model=Case,
     status_code=status.HTTP_200_OK,
     summary="Change a case's title",
+    description="The title must not be empty.",
     responses={
         200: {"description": "The case with its new title."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is closed."},
     },
 )
 async def update_case_title(case_id: int, update: TitleUpdate, case=Depends(_open_case)):
-    row = await db_fetchrow(
-        "UPDATE cases SET title = $2 WHERE id = $1 RETURNING *",
-        case_id,
-        update.title,
-    )
+    row = await db_update_case(case_id, "title", update.title)
     return Case(**row)
 
 
@@ -748,16 +842,12 @@ async def update_case_title(case_id: int, update: TitleUpdate, case=Depends(_ope
     description="Whole-list replace, not a merge — send the complete list of tags the case should carry.",
     responses={
         200: {"description": "The case with its tags replaced."},
-        404: {"description": "No case with this id."},
+        404: {"description": "No case with this id that the caller can reach."},
         409: {"description": "The case is closed."},
     },
 )
 async def update_case_tags(case_id: int, update: TagsUpdate, case=Depends(_open_case)):
-    row = await db_fetchrow(
-        "UPDATE cases SET tags = $2 WHERE id = $1 RETURNING *",
-        case_id,
-        update.tags,
-    )
+    row = await db_update_case(case_id, "tags", update.tags)
     return Case(**row)
 
 
@@ -769,7 +859,7 @@ async def update_case_tags(case_id: int, update: TagsUpdate, case=Depends(_open_
     description="Whole-list replace, not a merge — send the complete list of tags the note should carry.",
     responses={
         200: {"description": "The note with its tags replaced."},
-        404: {"description": "No note with this id on this case that the caller may read."},
+        404: {"description": "No case or note with these ids that the caller may read."},
         409: {"description": "The case is closed."},
     },
 )
@@ -781,12 +871,7 @@ async def update_note_tags(
     user: AuthUser = Depends(_require_case_user),
 ):
     await _readable_note(case, note_id, user)
-    row = await db_fetchrow(
-        "UPDATE case_notes SET tags = $3 WHERE id = $2 AND case_id = $1 RETURNING *",
-        case_id,
-        note_id,
-        update.tags,
-    )
+    row = await db_update_note_tags(case_id, note_id, update.tags)
     return (await _with_attachments([row]))[0]
 
 
@@ -804,7 +889,7 @@ async def update_note_tags(
     responses={
         201: {"description": "The stored picture."},
         403: {"description": "The caller did not write this note."},
-        404: {"description": "No case or note with this id that the caller may read."},
+        404: {"description": "No case or note with these ids that the caller may read."},
         409: {"description": "The case is closed, or the note already has 10 pictures."},
         413: {"description": "Larger than 20 MB."},
         422: {"description": "Not a JPEG, PNG or WebP picture."},
@@ -823,7 +908,7 @@ async def add_attachment(
     data = await file.read(20 * 1024 * 1024 + 1)
     if len(data) > 20 * 1024 * 1024:
         raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="Larger than 20 MB")
-    if (await db_fetchrow("SELECT count(*) FROM case_note_attachments WHERE note_id = $1", note_id))[0] >= 10:
+    if await db_count_attachments(note_id) >= 10:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A note can have at most 10 pictures")
     try:
         picture, thumbnail, width, height = await asyncio.to_thread(_process_picture, data)
@@ -832,33 +917,37 @@ async def add_attachment(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Only JPEG, PNG and WebP pictures can be attached"
         )
 
-    # The files are written before the row commits, so a failed write leaves no row pointing at nothing.
-    async with db_transaction() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO case_note_attachments (case_id, note_id, creator_id, filename, content_type, width, height, size)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING *
-            """,
-            case_id,
-            note_id,
-            user.user_id,
-            file.filename or "",
-            "image/jpeg",
-            width,
-            height,
-            len(picture),
-        )
-        await asyncio.to_thread(_write_attachment, row["id"], picture, thumbnail)
-        return Attachment(**row)
-
-
-async def _attachment_file(case, note_id: int, attachment_id: int, user: AuthUser, suffix: str) -> FileResponse:
-    await _readable_note(case, note_id, user)
-    row = await db_fetchrow(
-        "SELECT * FROM case_note_attachments WHERE note_id = $1 AND id = $2", note_id, attachment_id
+    row = await db_insert_attachment(
+        case_id, note_id, user.user_id, file.filename or "", width, height, picture, thumbnail
     )
-    path = ATTACHMENT_DIR / f"{attachment_id}{suffix}"
+    return Attachment(**row)
+
+
+@router.get(
+    "/{case_id}/notes/{note_id}/attachments/{attachment_id}",
+    response_class=FileResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get a note's picture",
+    description=(
+        "The stored JPEG, or with `thumbnail=true` its thumbnail of at most 320 pixels either way. "
+        "For whoever may read the note, also on a closed case. Not logged."
+    ),
+    responses={
+        200: {"content": {"image/jpeg": {}}, "description": "The picture or its thumbnail."},
+        404: {"description": "No case, note or picture with these ids that the caller may read."},
+    },
+)
+async def get_attachment(
+    case_id: int,
+    note_id: int,
+    attachment_id: int,
+    thumbnail: bool = False,
+    case=Depends(_case),
+    user: AuthUser = Depends(_require_case_user),
+):
+    await _readable_note(case, note_id, user)
+    row = await db_get_attachment(note_id, attachment_id)
+    path = ATTACHMENT_DIR / f"{attachment_id}{'.thumb' if thumbnail else ''}.jpg"
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
     if not path.is_file():
@@ -870,38 +959,6 @@ async def _attachment_file(case, note_id: int, attachment_id: int, user: AuthUse
     )
 
 
-_ATTACHMENT_RESPONSES = {
-    200: {"content": {"image/jpeg": {}}, "description": "The JPEG."},
-    404: {"description": "No case, note or picture with these ids that the caller may read."},
-}
-
-
-@router.get(
-    "/{case_id}/notes/{note_id}/attachments/{attachment_id}",
-    response_class=FileResponse,
-    summary="Get a note's picture",
-    description="For whoever may read the note, also on a closed case. Not logged.",
-    responses=_ATTACHMENT_RESPONSES,
-)
-async def get_attachment(
-    note_id: int, attachment_id: int, case=Depends(_case), user: AuthUser = Depends(_require_case_user)
-):
-    return await _attachment_file(case, note_id, attachment_id, user, ".jpg")
-
-
-@router.get(
-    "/{case_id}/notes/{note_id}/attachments/{attachment_id}/thumbnail",
-    response_class=FileResponse,
-    summary="Get a note's picture as a thumbnail",
-    description="At most 320 pixels either way. For whoever may read the note, also on a closed case.",
-    responses=_ATTACHMENT_RESPONSES,
-)
-async def get_attachment_thumbnail(
-    note_id: int, attachment_id: int, case=Depends(_case), user: AuthUser = Depends(_require_case_user)
-):
-    return await _attachment_file(case, note_id, attachment_id, user, ".thumb.jpg")
-
-
 @router.get(
     "/tags",
     response_model=list[str],
@@ -911,10 +968,8 @@ async def get_attachment_thumbnail(
     responses={200: {"description": "All existing tag names."}},
 )
 async def list_tags(user: AuthUser = Depends(_require_case_user)):
-    cases = {row["id"]: row for row in await db_fetch("SELECT * FROM cases") if _reaches(user, row)}
-    notes = await db_fetch(
-        "SELECT case_id, creator_id, secrecy_level, tags FROM case_notes WHERE case_id = ANY($1)", list(cases)
-    )
+    cases = {row["id"]: row for row in await db_list_cases() if _reaches(user, row)}
+    notes = await db_list_notes(list(cases))
     tags = {tag for case in cases.values() for tag in case["tags"]}
     tags.update(tag for note in notes if _may_read_note(user, cases[note["case_id"]], note) for tag in note["tags"])
     return sorted(tags)
@@ -925,7 +980,7 @@ async def list_tags(user: AuthUser = Depends(_require_case_user)):
     response_model=list[str],
     status_code=status.HTTP_200_OK,
     summary="List valid case types",
-    description=("The values `type` may take on `POST /cases` for this caller: the types their roles give them."),
+    description="The values `type` may take on `POST /cases` for this caller: the types their roles give them.",
     responses={200: {"description": "The caller's case types."}},
 )
 async def list_case_types(user: AuthUser = Depends(_require_case_user)):

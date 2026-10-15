@@ -760,7 +760,7 @@ def test_no_pictures_on_a_closed_case_nor_more_than_10_on_a_note(closed, existin
     assert bool(db.writes) == (status_code == 201)
 
 
-@pytest.mark.parametrize("suffix", ["", "/thumbnail"])
+@pytest.mark.parametrize("suffix", ["", "?thumbnail=true"])
 @pytest.mark.parametrize(
     ("who", "note_id", "attachment_id", "status_code"),
     [
