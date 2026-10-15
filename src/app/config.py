@@ -44,8 +44,9 @@ class Settings(BaseSettings):
     # How often the background task refreshes the Scoutnet cache, in hours,
     # counted from 03:00 Europe/Stockholm. Hourly while the Scoutnet data is
     # still churning; set it back to 24 for a single nightly run once it has
-    # settled down (autumn 2026).
-    SCOUTNET_REFRESH_INTERVAL_HOURS: int = Field(default=1, ge=1, le=24)
+    # settled down (autumn 2026). 0 turns the refresh off: the cache is then
+    # filled once at startup and only changes through this app's own writes.
+    SCOUTNET_REFRESH_INTERVAL_HOURS: int = Field(default=1, ge=0, le=24)
     # Signs the JSON this app stores in a Scoutnet question field, so a value
     # edited by hand in the Scoutnet admin GUI is detected and dropped instead
     # of being read back as if this app had written it. Unset means no signing

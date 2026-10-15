@@ -185,6 +185,9 @@ async def scoutnet_init() -> None:
         # every write made since startup from the cached records.
         logger.warning("SCOUTNET_SNAPSHOT_DIR is set — serving %s, no refreshes", settings.SCOUTNET_SNAPSHOT_DIR)
         return
+    if not settings.SCOUTNET_REFRESH_INTERVAL_HOURS:
+        logger.warning("SCOUTNET_REFRESH_INTERVAL_HOURS is 0 — no scheduled cache refresh")
+        return
     _refresh_task = asyncio.create_task(_scheduled_cache_refresh())
 
 
