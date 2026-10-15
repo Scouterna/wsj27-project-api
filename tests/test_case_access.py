@@ -8,6 +8,7 @@ as for one that does not exist), 409 for a closed one, and nothing written
 whenever a route refuses.
 """
 
+import io
 import re
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
+from PIL import ExifTags, Image
 
 from app import case as case_module
 from app.authenctication import AuthUser, require_auth_user
@@ -70,6 +72,22 @@ def _note(**fields) -> dict:
         "title": "t",
         "note": "n",
         "tags": [],
+    } | fields
+
+
+def _attachment(**fields) -> dict:
+    """A whole attachment row: picture 1 on note 1 of case 1, by someone else."""
+    return {
+        "id": 1,
+        "case_id": 1,
+        "note_id": 1,
+        "created_at": "2026-10-07T12:00:00Z",
+        "creator_id": OTHER,
+        "filename": "p.jpg",
+        "content_type": "image/jpeg",
+        "width": 2048,
+        "height": 1536,
+        "size": 1000,
     } | fields
 
 
@@ -173,7 +191,7 @@ class Statement(NamedTuple):
 
 
 class FakeDatabase:
-    """Stands in for db.py: rows in `cases` and `notes`, and every statement run in `calls`.
+    """Stands in for db.py: rows in `cases`, `notes` and `attachments`, and every statement run in `calls`.
 
     Statements are told apart by verb and table, not by their exact text, and one
     this does not know fails the test rather than passing for the wrong reason. An
@@ -184,6 +202,7 @@ class FakeDatabase:
     def __init__(self):
         self.cases: list[dict] = []
         self.notes: list[dict] = []
+        self.attachments: list[dict] = []
         self.calls: list[Statement] = []
 
     @property
@@ -206,6 +225,13 @@ class FakeDatabase:
                 return next((n for n in self.notes if (n["case_id"], n["id"]) == args[:2]), None)
             case "UPDATE", "cases":
                 return next(c for c in self.cases if c["id"] == args[0])
+            case "SELECT", "case_note_attachments" if "count(*)" in statement.sql:  # of one note
+                return [sum(a["note_id"] == args[0] for a in self.attachments)]
+            case "SELECT", "case_note_attachments":  # one, by note and attachment id
+                return next((a for a in self.attachments if (a["note_id"], a["id"]) == args[:2]), None)
+            case "INSERT", "case_note_attachments":
+                columns = re.search(r"\((.*?)\) VALUES", statement.sql)[1].split(", ")
+                return _attachment(id=len(self.attachments) + 1, **dict(zip(columns, args, strict=True)))
             case "INSERT", ("cases" | "case_notes") as table:
                 columns = re.search(r"\((.*?)\) VALUES", statement.sql)[1].split(", ")
                 row = dict(zip(columns, args, strict=True))
@@ -220,6 +246,8 @@ class FakeDatabase:
             case "SELECT", "case_notes":  # of one case, or of ANY of a list of them
                 case_ids = args[0] if isinstance(args[0], list) else [args[0]]
                 return [n for n in self.notes if n["case_id"] in case_ids]
+            case "SELECT", "case_note_attachments":  # of ANY of a list of notes
+                return [a for a in self.attachments if a["note_id"] in args[0]]
         raise AssertionError(f"Unexpected statement: {statement.sql}")
 
     async def execute(self, sql: str, *args):
@@ -271,7 +299,7 @@ def _routes(case_routes_only=False):
         assert isinstance(route, APIRoute)
         if case_routes_only and "{case_id}" not in route.path:
             continue
-        path = route.path.replace("{case_id}", "1").replace("{note_id}", "1")
+        path = route.path.replace("{case_id}", "1").replace("{note_id}", "1").replace("{attachment_id}", "1")
         for method in route.methods:
             yield method, f"/cases{path}"
 
@@ -647,3 +675,132 @@ def test_a_case_can_be_retitled(title, status_code, db):
     response = _client(CMT_HEALTH).put("/cases/1/title", json={"title": title})
     assert response.status_code == status_code
     assert [write.args for write in db.writes] == ([(1, title)] if status_code == 200 else [])
+
+
+# --- Attachments --------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def attachment_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(case_module, "ATTACHMENT_DIR", tmp_path)
+    return tmp_path
+
+
+def _photo(size=(4000, 3000), orientation=6) -> bytes:
+    """A JPEG as a phone takes it: EXIF with GPS, and stored on its side (6 = turn it 90° clockwise to view)."""
+    exif = Image.Exif()
+    exif[ExifTags.Base.Orientation] = orientation
+    exif[ExifTags.IFD.GPSInfo] = {ExifTags.GPS.GPSLatitudeRef: "N", ExifTags.GPS.GPSLatitude: (59.0, 20.0, 0.0)}
+    data = io.BytesIO()
+    Image.new("RGB", size, "red").save(data, "JPEG", exif=exif)
+    assert Image.open(data).getexif().get_ifd(ExifTags.IFD.GPSInfo)  # so its absence below means something
+    return data.getvalue()
+
+
+def _upload(client: TestClient, data: bytes, note_id=1):
+    return client.post(f"/cases/1/notes/{note_id}/attachments", files={"file": ("photo.jpg", data, "image/jpeg")})
+
+
+def test_a_picture_is_stored_upright_scaled_down_and_without_its_exif(db, attachment_dir):
+    roles, case = _as("role holder")
+    db.cases, db.notes = [case], [_note(creator_id=ME)]
+    response = _upload(_client(*roles), _photo())
+    assert response.status_code == 201
+    assert (response.json()["width"], response.json()["height"]) == (1536, 2048)
+    picture = Image.open(attachment_dir / "1.jpg")
+    thumbnail = Image.open(attachment_dir / "1.thumb.jpg")
+    assert picture.size == (1536, 2048)  # stood up, then fitted into 2048
+    assert thumbnail.size == (240, 320)
+    assert not picture.getexif() and not thumbnail.getexif()
+    assert [write.table for write in db.writes] == ["case_note_attachments"]
+
+
+@pytest.mark.parametrize(
+    ("who", "note_fields", "status_code"),
+    [
+        ("role holder", {"creator_id": ME}, 201),
+        ("grantee", {"creator_id": ME}, 201),  # a grantee's own note
+        ("role holder", {}, 403),  # someone else's note
+        ("role holder", {"secrecy_level": 5}, 404),  # someone else's private note
+        ("grantee", {"secrecy_level": 4}, 404),  # a note kept from grantees
+    ],
+)
+def test_only_a_notes_author_attaches_to_it(who, note_fields, status_code, db):
+    roles, case = _as(who)
+    db.cases, db.notes = [case], [_note(**note_fields)]
+    response = _upload(_client(*roles), _photo(size=(40, 30)))
+    assert response.status_code == status_code
+    assert bool(db.writes) == (status_code == 201)
+
+
+@pytest.mark.parametrize(
+    ("data", "status_code"),
+    [
+        (b"%PDF-1.7 not a picture", 422),
+        (_photo(size=(40, 30))[:200], 422),  # a JPEG cut short
+        (b"\0" * (20 * 1024 * 1024 + 1), 413),
+    ],
+)
+def test_only_pictures_of_at_most_20_mb_are_attached(data, status_code, db, attachment_dir):
+    roles, case = _as("role holder")
+    db.cases, db.notes = [case], [_note(creator_id=ME)]
+    response = _upload(_client(*roles), data)
+    assert response.status_code == status_code
+    assert db.writes == []
+    assert list(attachment_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(("closed", "existing", "status_code"), [(True, 0, 409), (False, 10, 409), (False, 9, 201)])
+def test_no_pictures_on_a_closed_case_nor_more_than_10_on_a_note(closed, existing, status_code, db):
+    roles, case = _as("role holder", closed=closed)
+    db.cases, db.notes = [case], [_note(creator_id=ME)]
+    db.attachments = [_attachment(id=i + 1) for i in range(existing)]
+    response = _upload(_client(*roles), _photo(size=(40, 30)))
+    assert response.status_code == status_code
+    assert bool(db.writes) == (status_code == 201)
+
+
+@pytest.mark.parametrize("suffix", ["", "?thumbnail=true"])
+@pytest.mark.parametrize(
+    ("who", "note_id", "attachment_id", "status_code"),
+    [
+        ("role holder", 1, 1, 200),
+        ("grantee", 1, 1, 200),
+        ("role holder", 2, 2, 200),  # a level 4 note's, to a role holder
+        ("grantee", 2, 2, 404),  # a level 4 note's, to a grantee
+        ("role holder", 3, 3, 404),  # someone else's level 5 note's
+        ("role holder", 1, 2, 404),  # a picture of another note
+        ("role holder", 1, 99, 404),  # no such picture
+    ],
+)
+def test_a_picture_is_for_whoever_may_read_its_note(
+    suffix, who, note_id, attachment_id, status_code, db, attachment_dir
+):
+    roles, case = _as(who, closed=True)  # closed, and still readable
+    db.cases, db.notes = [case], NOTES
+    db.attachments = [_attachment(id=n, note_id=n) for n in (1, 2, 3)]
+    for n in (1, 2, 3):
+        (attachment_dir / f"{n}.jpg").write_bytes(b"picture")
+        (attachment_dir / f"{n}.thumb.jpg").write_bytes(b"thumbnail")
+    response = _client(*roles).get(f"/cases/1/notes/{note_id}/attachments/{attachment_id}{suffix}")
+    assert response.status_code == status_code
+    if status_code == 200:
+        assert response.content == (b"thumbnail" if suffix else b"picture")
+        assert response.headers["content-type"] == "image/jpeg"
+        assert response.headers["cache-control"].startswith("private")
+    assert db.writes == []  # not logged
+
+
+def test_a_picture_whose_file_is_gone_looks_missing(db):
+    roles, case = _as("role holder")
+    db.cases, db.notes, db.attachments = [case], [_note()], [_attachment()]
+    assert _client(*roles).get("/cases/1/notes/1/attachments/1").status_code == 404
+
+
+@pytest.mark.parametrize(("who", "seen"), [("role holder", {1: [1], 2: [2], 4: []}), ("grantee", {1: [1], 4: []})])
+def test_the_note_list_carries_the_pictures_of_the_notes_in_it(who, seen, db):
+    roles, case = _as(who)
+    db.cases, db.notes = [case], NOTES
+    db.attachments = [_attachment(id=n, note_id=n) for n in (1, 2, 3)]
+    response = _client(*roles).get("/cases/1/notes")
+    assert {note["id"]: [a["id"] for a in note["attachments"]] for note in response.json()} == seen
