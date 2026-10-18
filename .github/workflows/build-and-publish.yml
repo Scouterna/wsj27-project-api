@@ -2,7 +2,9 @@ name: Build and publish
 
 on:
   push:
-    branches: ["main", "dev"]
+    # A pushed feature branch gets an image too, tagged with the branch name
+    # (feat/x -> :feat-x) and the short SHA, so it can be tried out before dev.
+    branches: ["main", "dev", "feat/**", "fix/**", "hotfix/**"]
     tags: ["v*.*.*"]
   pull_request:
     branches: ["main"]
