@@ -1,10 +1,12 @@
 """Case management: cases and the notes attached to them.
 
 A case tracks an issue for the contingent through the notes added to it, until
-it is closed. It is about one person (`about_person_id`), about a troop as a
-whole (`troop`, no person), or about neither, e.g. a broken-down hire car; then
-its title and tags say what it is about. Only an `avdelning` case must name a
-troop, because that is what decides which leaders reach it.
+it is closed. It is about one or more people (`about_person_ids`), about a troop
+as a whole (`troop`, no people), or about neither, e.g. a broken-down hire car;
+then its title and tags say what it is about. Only an `avdelning` case must name
+a troop, because that is what decides which leaders reach it. Who a case is
+about can be changed later, and each change adds a note saying who was added and
+who removed, so the notes keep the history.
 
 Who may reach a case is decided by its `type`, its `secrecy_level` and its
 `extra_access` list; the rules are spelled out at the top of the internal helpers. Each
@@ -22,11 +24,10 @@ already-existing table the next time a rule changes.
 `secrecy_level` is on cases and notes; a note's may not be lower than its
 case's. `extra_access` (scoutnet member IDs) is on cases only.
 
-`extra_access` and `tags` are plain array columns directly on `cases` (and
-`tags` on `case_notes` too), not normalized lookup tables — see
-tags-as-plain-arrays in project memory for why. `PUT .../extra_access` and
-`PUT .../tags` both replace the whole list; neither merges with what is
-already there.
+`about_person_ids`, `extra_access` and `tags` are plain array columns directly
+on `cases` (and `tags` on `case_notes` too), not normalized lookup tables — see
+tags-as-plain-arrays in project memory for why. Their `PUT` routes all replace
+the whole list; none merges with what is already there.
 
 Notes are immutable once created, apart from their tags and the pictures their
 author attaches — there is no endpoint to edit or delete one. `GET
@@ -82,7 +83,9 @@ class CaseCreate(BaseModel):
     type: str = Field(
         description="One of the values from `GET /cases/types`. Used as a filter in searches and in access control."
     )
-    about_person_id: int | None = Field(None, description="Member ID. Omit for a case about a troop, or about neither.")
+    about_person_ids: list[int] = Field(
+        default_factory=list, description="Member IDs. Empty for a case about a troop, or about neither."
+    )
     troop: str = Field(
         "",
         description=(
@@ -107,7 +110,7 @@ class Case(BaseModel):
     secrecy_level: int
     title: str
     type: str
-    about_person_id: int | None
+    about_person_ids: list[int]
     assigned_to_id: int | None
     troop: str
     latest_note_at: datetime | None
@@ -116,6 +119,10 @@ class Case(BaseModel):
     closed_by_id: int | None
     extra_access: list[int]
     tags: list[str]
+
+
+class AboutPersonsUpdate(BaseModel):
+    about_person_ids: list[int]
 
 
 class ExtraAccessUpdate(BaseModel):
@@ -184,7 +191,7 @@ async def db_init_tables() -> None:
             secrecy_level     SMALLINT     NOT NULL,
             title             TEXT         NOT NULL,
             type              TEXT         NOT NULL,
-            about_person_id   BIGINT,
+            about_person_ids  BIGINT[]     NOT NULL DEFAULT '{}',
             assigned_to_id    BIGINT,
             troop             TEXT         NOT NULL,
             latest_note_at    TIMESTAMPTZ,
@@ -195,7 +202,6 @@ async def db_init_tables() -> None:
             tags              TEXT[]       NOT NULL DEFAULT '{}'
         )
     """)
-    await db_execute("CREATE INDEX IF NOT EXISTS cases_about_person_idx  ON cases (about_person_id)")
     await db_execute("CREATE INDEX IF NOT EXISTS cases_assigned_to_idx   ON cases (assigned_to_id)")
     await db_execute("CREATE INDEX IF NOT EXISTS cases_troop_idx         ON cases (troop)")
     await db_execute("CREATE INDEX IF NOT EXISTS cases_created_at_idx    ON cases (created_at)")
@@ -242,6 +248,7 @@ async def db_init_tables() -> None:
     """)
     await db_execute("CREATE INDEX IF NOT EXISTS case_note_attachments_note_id_idx ON case_note_attachments (note_id)")
 
+    await db_execute("CREATE INDEX IF NOT EXISTS cases_about_persons_idx ON cases USING GIN (about_person_ids)")
     await db_execute("CREATE INDEX IF NOT EXISTS cases_tags_idx      ON cases USING GIN (tags)")
     await db_execute("CREATE INDEX IF NOT EXISTS case_notes_tags_idx ON case_notes USING GIN (tags)")
 
@@ -254,7 +261,7 @@ async def db_init_tables() -> None:
 async def db_insert_case(creator_id: int, case: CaseCreate):
     return await db_fetchrow(
         """
-        INSERT INTO cases (creator_id, secrecy_level, title, type, about_person_id, troop, extra_access, tags)
+        INSERT INTO cases (creator_id, secrecy_level, title, type, about_person_ids, troop, extra_access, tags)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
         """,
@@ -262,7 +269,7 @@ async def db_insert_case(creator_id: int, case: CaseCreate):
         case.secrecy_level,
         case.title,
         case.type,
-        case.about_person_id,
+        case.about_person_ids,
         case.troop,
         case.extra_access,
         case.tags,
@@ -287,7 +294,7 @@ async def db_list_cases(
 
     if about_person_id is not None:
         args.append(about_person_id)
-        conditions.append(f"about_person_id = ${len(args)}")
+        conditions.append(f"about_person_ids @> ARRAY[${len(args)}]::BIGINT[]")
     if troop is not None:
         args.append(troop)
         conditions.append(f"troop = ${len(args)}")
@@ -310,6 +317,32 @@ async def db_list_cases(
 async def db_update_case(case_id: int, column: str, value):
     """Set one column. `column` always comes from the code, never from the request."""
     return await db_fetchrow(f"UPDATE cases SET {column} = $2 WHERE id = $1 RETURNING *", case_id, value)
+
+
+async def db_update_about_person_ids(
+    case_id: int, about_person_ids: list[int], creator_id: int, secrecy_level: int, note: NoteCreate
+):
+    """Set who the case is about and add the note that says so, in one transaction. Returns the case."""
+    async with db_transaction() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO case_notes (case_id, creator_id, secrecy_level, title, note, tags)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+            """,
+            case_id,
+            creator_id,
+            secrecy_level,
+            note.title,
+            note.note,
+            note.tags,
+        )
+        return await conn.fetchrow(
+            "UPDATE cases SET about_person_ids = $2, latest_note_at = $3 WHERE id = $1 RETURNING *",
+            case_id,
+            about_person_ids,
+            row["created_at"],
+        )
 
 
 async def db_close_case(case_id: int, closed_by_id: int):
@@ -508,6 +541,27 @@ def _check_extra_access(secrecy_level: int, extra_access: list[int]) -> None:
         )
 
 
+def _check_in_troop(case_type: str, troop: str, member_ids: list[int]) -> None:
+    """An avdelning case can only be about members of its own troop."""
+    if case_type != "avdelning":
+        return
+    participants = get_single_project().participants
+    for member_id in member_ids:
+        # Same answer for someone missing and someone in another troop, so a
+        # leader cannot use this to find out who is in the contingent.
+        person = participants.get(member_id)
+        if not person or person["troop"] != troop:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Member {member_id} is not in troop {troop}"
+            )
+
+
+def _about_change_note(added: list[int], removed: list[int]) -> NoteCreate:
+    """The note that records a change of who a case is about, by member ID."""
+    lines = [f"{label}: {', '.join(map(str, ids))}" for label, ids in (("Added", added), ("Removed", removed)) if ids]
+    return NoteCreate(title="Changed who the case is about", note="\n".join(lines))
+
+
 async def _require_case_user(user: AuthUser = Depends(require_auth_user)) -> AuthUser:
     if not _types_for(user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No access to cases")
@@ -578,13 +632,13 @@ router = APIRouter(responses={403: {"description": "The caller's roles give no a
     status_code=status.HTTP_201_CREATED,
     summary="Create a case",
     description=(
-        "Opens a new case. `about_person_id` may be omitted for a case about a "
-        "troop as a whole rather than one person, and both it and `troop` may be "
+        "Opens a new case. `about_person_ids` may be left empty for a case about a "
+        "troop as a whole rather than some of its people, and both it and `troop` may be "
         "omitted for a case about something else, e.g. a broken-down hire car; "
         "the title and tags then say what it is about.\n\n"
         "`troop` is a string and can also hold a function name, e.g., CMT. "
         "For an `avdelning` case it is required and must be one of the caller's "
-        "own troops, and `about_person_id` must be someone in it."
+        "own troops, and everyone in `about_person_ids` must be in it."
     ),
     responses={
         201: {"description": "The created case."},
@@ -606,15 +660,7 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"No access to {case.type} cases for {case.troop}"
         )
-    if case.type == "avdelning" and case.about_person_id is not None:
-        # Same answer for someone missing and someone in another troop, so a
-        # leader cannot use this to find out who is in the contingent.
-        person = get_single_project().participants.get(case.about_person_id)
-        if not person or person["troop"] != case.troop:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"Member {case.about_person_id} is not in troop {case.troop}",
-            )
+    _check_in_troop(case.type, case.troop, case.about_person_ids)
     if case.secrecy_level < 3:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Secrecy levels 1 and 2 are not in use yet"
@@ -631,7 +677,8 @@ async def create_case(case: CaseCreate, user: AuthUser = Depends(_require_case_u
     summary="List cases",
     description=(
         "Newest first, filtered by whichever of the query parameters are given. "
-        "`tag` matches cases carrying that exact tag. Closed cases are left out "
+        "`about_person_id` matches cases that have that member among their `about_person_ids`, "
+        "and `tag` cases carrying that exact tag. Closed cases are left out "
         "unless `include_closed=true`."
     ),
     responses={200: {"description": "The matching cases."}},
@@ -764,6 +811,42 @@ async def get_case_notes(case_id: int, case=Depends(_case), user: AuthUser = Dep
 )
 async def get_case_access(case_id: int, case=Depends(_case)):
     return _members_with_access(case)
+
+
+@router.put(
+    "/{case_id}/about_person_ids",
+    response_model=Case,
+    status_code=status.HTTP_200_OK,
+    summary="Replace who a case is about",
+    description=(
+        "Whole-list replace, not a merge — send the complete list of member IDs the case is about. "
+        "A change adds a note at the case's secrecy level, written by the caller, that lists by member ID "
+        "who was added and who removed; sending the same people again changes nothing. On an `avdelning` "
+        "case everyone added must be in its troop. Changes no one's access."
+    ),
+    responses={
+        200: {"description": "The case with its about_person_ids replaced."},
+        403: {"description": "The caller is a grantee, not one of the case type's role holders."},
+        404: {"description": "No case with this id that the caller can reach."},
+        409: {"description": "The case is closed."},
+        422: {"description": "On an `avdelning` case, someone added who is not in its troop."},
+    },
+)
+async def update_case_about_person_ids(
+    case_id: int, update: AboutPersonsUpdate, case=Depends(_open_case), user: AuthUser = Depends(_require_case_user)
+):
+    if not _is_role_holder(user, case):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the case type's own roles may do this")
+    added = [member_id for member_id in update.about_person_ids if member_id not in case["about_person_ids"]]
+    removed = [member_id for member_id in case["about_person_ids"] if member_id not in update.about_person_ids]
+    if not added and not removed:
+        return Case(**case)
+    # Only those added: someone already on the case who has since moved troop can stay.
+    _check_in_troop(case["type"], case["troop"], added)
+    row = await db_update_about_person_ids(
+        case_id, update.about_person_ids, user.user_id, case["secrecy_level"], _about_change_note(added, removed)
+    )
+    return Case(**row)
 
 
 @router.put(

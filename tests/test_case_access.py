@@ -49,7 +49,7 @@ def _case(**fields) -> dict:
         "secrecy_level": 3,
         "title": "t",
         "type": "hälsa",
-        "about_person_id": None,
+        "about_person_ids": [],
         "assigned_to_id": None,
         "troop": "18",
         "latest_note_at": None,
@@ -375,6 +375,7 @@ ACTIONS = [
     ("PUT", "/cases/1/tags", {"tags": ["x"]}, 200, 200),
     ("PUT", "/cases/1/notes/1/tags", {"tags": ["x"]}, 200, 200),
     ("PUT", "/cases/1/assignee", {"assigned_to_id": None}, 200, 200),
+    ("PUT", "/cases/1/about_person_ids", {"about_person_ids": [3000001]}, 200, 403),
     ("PUT", "/cases/1/extra_access", {"extra_access": [2000001]}, 200, 403),
 ]
 
@@ -399,6 +400,7 @@ CHANGES = [
     ("PUT", "/cases/1/tags", {"tags": []}),
     ("PUT", "/cases/1/notes/1/tags", {"tags": []}),
     ("PUT", "/cases/1/assignee", {"assigned_to_id": None}),
+    ("PUT", "/cases/1/about_person_ids", {"about_person_ids": []}),
     ("PUT", "/cases/1/extra_access", {"extra_access": []}),
 ]
 
@@ -475,26 +477,31 @@ def test_secrecy_levels_a_case_cannot_be_created_with(body, detail, db):
 
 
 @pytest.mark.parametrize(
-    ("about_person_id", "status_code"),
+    ("about_person_ids", "status_code"),
     [
-        (3000001, 201),  # someone in the leader's own troop
-        (None, 201),  # the troop as a whole
-        (1000019, 422),  # someone in another troop
-        (9999999, 422),  # nobody: the same answer, so a leader cannot map the contingent
+        ([3000001], 201),  # someone in the leader's own troop
+        ([3000001, 1000018], 201),  # several of them
+        ([], 201),  # the troop as a whole
+        ([3000001, 1000019], 422),  # someone in another troop among them
+        ([9999999], 422),  # nobody: the same answer, so a leader cannot map the contingent
     ],
 )
-def test_a_leader_files_troop_cases_only_about_their_own_troop(about_person_id, status_code, db):
-    response = _client(LEADER_18).post("/cases", json=BODY | {"type": "avdelning", "about_person_id": about_person_id})
+def test_a_leader_files_troop_cases_only_about_their_own_troop(about_person_ids, status_code, db):
+    response = _client(LEADER_18).post(
+        "/cases", json=BODY | {"type": "avdelning", "about_person_ids": about_person_ids}
+    )
     assert response.status_code == status_code
     if status_code == 422:
-        assert response.json() == {"detail": f"Member {about_person_id} is not in troop 18"}
+        assert response.json() == {"detail": f"Member {about_person_ids[-1]} is not in troop 18"}
         assert db.calls == []
+    else:
+        assert response.json()["about_person_ids"] == about_person_ids
 
 
 def test_a_case_may_be_about_neither_a_person_nor_a_troop(db):
     response = _client(CMT_IT).post("/cases", json={"title": "Hire car broke down", "type": "cmt", "tags": ["bil"]})
     assert response.status_code == 201
-    assert response.json()["about_person_id"] is None
+    assert response.json()["about_person_ids"] == []
     assert response.json()["troop"] == ""
 
 
@@ -504,6 +511,49 @@ def test_an_avdelning_case_needs_a_troop(body, db):
     assert response.status_code == 422
     assert response.json() == {"detail": "An avdelning case needs a troop"}
     assert db.calls == []
+
+
+# --- Who a case is about -----------------------------------------------------
+
+
+def test_changing_who_a_case_is_about_adds_a_note_that_says_so(db):
+    db.cases = [_case(secrecy_level=4, about_person_ids=[3000001, 3000002])]
+    response = _client(CMT_HEALTH).put(
+        "/cases/1/about_person_ids", json={"about_person_ids": [3000002, 1000018, 1000019]}
+    )
+    assert response.status_code == 200
+    note, case = db.writes
+    assert (note.verb, note.table) == ("INSERT", "case_notes")
+    # By the caller, at the case's level, so everyone who reaches the case reads it.
+    assert note.args == (1, ME, 4, "Changed who the case is about", "Added: 1000018, 1000019\nRemoved: 3000001", [])
+    assert (case.verb, case.table) == ("UPDATE", "cases")
+    assert case.args[:2] == (1, [3000002, 1000018, 1000019])
+
+
+@pytest.mark.parametrize("sent", [[3000001, 3000002], [3000002, 3000001]])
+def test_sending_the_same_people_again_changes_nothing(sent, db):
+    db.cases = [_case(about_person_ids=[3000001, 3000002])]
+    response = _client(CMT_HEALTH).put("/cases/1/about_person_ids", json={"about_person_ids": sent})
+    assert response.status_code == 200
+    assert db.writes == []
+
+
+@pytest.mark.parametrize(
+    ("sent", "status_code"),
+    [
+        ([1000019, 3000001], 200),  # someone already on the case, since moved to troop 19, may stay
+        ([3000001], 200),  # and may be removed
+        ([1000019, 3000001, 3000002], 422),  # someone from another troop may not be added
+        ([1000019, 9999999], 422),  # nor nobody: the same answer
+    ],
+)
+def test_only_the_troops_own_people_are_added_to_a_troop_case(sent, status_code, db):
+    db.cases = [_case(type="avdelning", about_person_ids=[1000019])]
+    response = _client(LEADER_18).put("/cases/1/about_person_ids", json={"about_person_ids": sent})
+    assert response.status_code == status_code
+    if status_code == 422:
+        assert response.json() == {"detail": f"Member {sent[-1]} is not in troop 18"}
+        assert db.writes == []
 
 
 # --- extra_access -------------------------------------------------------------
