@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Temporary, for deployments: serve every Scoutnet GET from a frozen copy of
     # .dev_cache/ in this directory and never read from Scoutnet at all. A
     # missing file is an error, not a live fetch. Writes to Scoutnet still go
-    # out. Put in place when Scoutnet started returning broken participant
+    # out, unless SCOUTNET_OVERLAY is on. Put in place when Scoutnet started returning broken participant
     # answers (2026-09-25); unset it once that is fixed. The files hold
     # personal data, so they live on the persist volume, never in the repo.
     SCOUTNET_SNAPSHOT_DIR: Path | None = None
@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     # of being read back as if this app had written it. Unset means no signing
     # and no verification — fine locally, but a deployment should set it.
     SCOUTNET_DB_HMAC_KEY: str = ""
+    # Keep every write to Scoutnet in PERSIST_DIR/scoutnet_overlay.json instead,
+    # laid over what is read back, so the app behaves as if it had written. On
+    # in dev, staging and local runs, off in prod: every environment reads the
+    # one real Scoutnet project, and only prod may change it. Its own switch,
+    # not the absence of `update_key`, so a prod that lost its key still fails
+    # its writes loudly. Delete the file and restart to reset. See scoutnet.py.
+    SCOUTNET_OVERLAY: bool = False
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
     # --- Database ---
     # Optional: unset means no database. The app then starts without a

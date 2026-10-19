@@ -27,16 +27,11 @@ drop the new value from the cache, though Scoutnet itself keeps it and the next
 refresh brings it back. Refreshes are hourly and writes are rare, so this is
 left as a known gap rather than paid for with a lock across the whole refresh.
 
-**dev and prod share this field.** Both deployments read and write the same
-Scoutnet project, so they write the same question on the same member. Only prod
-has a `SCOUTNET_DB_HMAC_KEY`, which gives the asymmetry we want for *reading* -
-prod rejects what dev wrote, dev accepts what prod wrote - but not isolation:
-a dev write still overwrites prod's value, and prod then drops it. `avatar_url`
-recovers by itself on the member's next authenticated request; an assigned
-role does not. The real fix is a separate question per environment,
-deliberately deferred (2026-09-24) in favour of watching prod's logs for the
-"carries no signature" error below. Leaving `update_key` out of dev's
-`SCOUTNET_PROJECTS` closes it entirely, at the cost of testing writes in dev.
+**Only prod writes this field.** Every environment reads the same Scoutnet
+project, so dev and staging run with SCOUTNET_OVERLAY, which keeps their writes
+out of Scoutnet (see scoutnet.py). Prod has a `SCOUTNET_DB_HMAC_KEY` and a local run does not, so a
+value written unsigned by a local run with the overlay off - the one deliberate
+way to test a real write - is rejected by prod rather than read back as its own.
 """
 
 import asyncio
@@ -46,15 +41,11 @@ import json
 import logging
 from typing import Any
 
-import httpx
-
 from .config import get_settings
-from .scoutnet import get_single_project
+from .scoutnet import ScoutnetRequestError, get_single_project, set_answer
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
-
-CHECKIN_API = "https://www.scoutnet.se/api/project/checkin"
 
 # The two forms share no question ids, so each member has exactly one of these
 # and it follows from their member_type. Writing the other one is accepted by
@@ -178,14 +169,12 @@ def decode(raw: Any, member_no: int) -> dict:
         return data if wrapped else envelope
 
     if not signed:
-        # Most likely the dev deployment: it writes to this same field on this
-        # same member, and without a key of its own it writes unsigned - which
-        # also means it has overwritten whatever was stored here. Separate
-        # fields per environment is the real fix; until then this line is how
-        # we find out it happened.
+        # Whatever wrote it had no key, and has overwritten what was stored
+        # here: a local run testing a real write (SCOUTNET_OVERLAY off), a
+        # deployment that should have had the overlay on, or a hand-edit.
         logger.error(
             "%s for member %s carries no signature, so its previous contents are gone - written by "
-            "an environment with no SCOUTNET_DB_HMAC_KEY (dev shares this field), edited by hand in "
+            "an environment with no SCOUTNET_DB_HMAC_KEY and SCOUTNET_OVERLAY off, edited by hand in "
             "Scoutnet, or written before the key was set. Dropping it: %.80r",
             FIELD,
             member_no,
@@ -332,18 +321,16 @@ async def replace(member_no: int, data: dict[str, Any]) -> dict:
 
 
 async def _write(member_no: int, data: dict[str, Any]) -> None:
-    """PUT the encoded object to Scoutnet, then update the cached copy.
+    """Write the encoded object to Scoutnet, then update the cached copy.
 
-    The cache is only updated once Scoutnet has committed, so a failed write
-    leaves the record reading exactly what Scoutnet still holds.
+    Through scoutnet.set_answer(), so SCOUTNET_OVERLAY keeps it out of Scoutnet
+    where it is on. The cache is only updated once the write has committed, so
+    a failed write leaves the record reading exactly what Scoutnet still holds.
     """
     try:
         project = get_single_project()
     except StopIteration:
         raise ScoutnetDbError("No project cached yet") from None
-    config = next((p for p in settings.SCOUTNET_PROJECTS if p.id == project.project_id), None)
-    if config is None or not config.update_key:
-        raise ScoutnetDbError(f"Project {project.project_id} has no update_key configured")
 
     participant = project.participants.get(member_no)
     if participant is None:
@@ -359,51 +346,14 @@ async def _write(member_no: int, data: dict[str, Any]) -> None:
     if len(encoded) > MAX_ENCODED_LEN:
         raise ScoutnetDbError(f"{FIELD} for member {member_no} would be {len(encoded)} chars, over {MAX_ENCODED_LEN}")
 
-    # Only `questions` — sending `checked_in` would force attended=1, which
-    # cannot be undone through this endpoint.
-    body = {str(member_no): {"questions": {question_id: {"value": encoded}}}}
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.put(
-                CHECKIN_API,
-                params={"id": str(project.project_id), "key": config.update_key},
-                json=body,
-            )
-    except httpx.HTTPError as exc:
-        raise ScoutnetDbError(f"Scoutnet write failed: {type(exc).__name__}") from exc
-
-    if response.status_code != httpx.codes.OK:
-        raise ScoutnetDbError(f"Scoutnet rejected the write: {_error_detail(response)}")
-
-    # An entry of null means "not updated", which for this endpoint means the
-    # stored value already matched — not a failure. Anything else carries the
-    # before/after pair, logged because this field is written rarely and by
-    # hand often enough that the history is worth having.
-    entry = (response.json().get("updated_questions") or {}).get(str(member_no), {}).get(question_id)
-    keys = ", ".join(sorted(data)) or "(empty)"
+        await set_answer(member_no, question_id, encoded)
+    except ScoutnetRequestError as exc:
+        raise ScoutnetDbError(str(exc)) from exc
+    # Logged because this field is written rarely and by hand often enough that
+    # the history is worth having; set_answer() has logged how it went.
     logger.info(
-        "%s for member %s %s: %s (%d chars)",
-        FIELD,
-        member_no,
-        "unchanged" if entry is None else entry.get("action"),
-        keys,
-        len(encoded),
+        "%s for member %s written: %s (%d chars)", FIELD, member_no, ", ".join(sorted(data)) or "(empty)", len(encoded)
     )
 
     participant[FIELD] = data
-
-
-def _error_detail(response: httpx.Response) -> str:
-    """The useful part of a Scoutnet error body, in either shape it comes in."""
-    try:
-        body = response.json()
-    except ValueError:
-        return f"HTTP {response.status_code}: {response.text[:200]}"
-    if isinstance(body, dict):
-        # Either {"error": "..."} or {"message": "...", "errors": {member: {qid: msg}}}.
-        detail = body.get("error") or body.get("message") or ""
-        if errors := body.get("errors"):
-            detail = f"{detail} {json.dumps(errors, ensure_ascii=False)}"
-        if detail:
-            return f"HTTP {response.status_code}: {detail.strip()[:300]}"
-    return f"HTTP {response.status_code}"
