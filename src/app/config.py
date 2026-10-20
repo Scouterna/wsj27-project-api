@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     # one real Scoutnet project, and only prod may change it. Its own switch,
     # not the absence of `update_key`, so a prod that lost its key still fails
     # its writes loudly. Delete the file and restart to reset. See scoutnet.py.
-    SCOUTNET_OVERLAY: bool = False
+    # On by default to prevent accidental writes to Scoutnet.
+    SCOUTNET_OVERLAY: bool = True
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
     # --- Database ---
     # Optional: unset means no database. The app then starts without a
