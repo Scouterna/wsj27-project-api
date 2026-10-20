@@ -1,6 +1,8 @@
-# Use a slim Python image for the application. The official image, from AWS's
-# public mirror: Docker Hub rate-limits the anonymous pulls CI makes (429).
-FROM public.ecr.aws/docker/library/python:3.14-slim
+# Use a slim Python image for the application. The official image, copied into
+# this repo's own GHCR package by the build workflow: Docker Hub and AWS's
+# public mirror both rate-limit the anonymous pulls CI makes (429). Change the
+# tag in both places.
+FROM ghcr.io/scouterna/wsj27-project-api/python:3.14-slim
 
 # Install uv as the package manager
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
