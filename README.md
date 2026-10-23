@@ -30,7 +30,7 @@ a finished product. Expect rough edges and breaking changes.
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
 | `GET /scoutnet/refresh` | Force a Scoutnet cache refresh. |
 | `/cases/*` | Case management — only registered when `POSTGRES_DSN` is set. |
-| `GET /docs` | Swagger UI (also `/redoc`, `/openapi.json`). |
+| `GET /docs` | Swagger UI (also `/redoc`, `/openapi.json`). Only with `API_DOCS=true`, so not in prod. |
 
 Auth follows the same model as the rest of the WSJ27 apps: a
 `wsj27-auth_access-token` cookie or bearer token, validated as a standard JWT
