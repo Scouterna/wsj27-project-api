@@ -55,9 +55,8 @@ class Settings(BaseSettings):
     ROOT_PATH: str = ""
     PORT: int = 8000
     DEBUG: bool = False
-    # Serve /docs, /redoc and /openapi.json. Off by default so prod, which
-    # leaves it unset, does not publish a map of the API; dev, staging and
-    # local runs turn it on.
+    # Serve /docs, /redoc and /openapi.json. Off by default, so no deployment
+    # publishes a map of the API unless it asks to; dev and local runs turn it on.
     API_DOCS: bool = False
     AUTH_DISABLED: bool = False
     # --- Fake user used when AUTH_DISABLED is set ---
