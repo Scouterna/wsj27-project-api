@@ -63,6 +63,8 @@ app = FastAPI(
     description=DESCRIPTION,
     lifespan=lifespan,
     root_path=settings.ROOT_PATH,
+    # No schema also means no /docs or /redoc, which are built from it.
+    openapi_url="/openapi.json" if settings.API_DOCS else None,
 )
 
 

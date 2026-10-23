@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     ROOT_PATH: str = ""
     PORT: int = 8000
     DEBUG: bool = False
+    # Serve /docs, /redoc and /openapi.json. Off by default, so no deployment
+    # publishes a map of the API unless it asks to; dev and local runs turn it on.
+    API_DOCS: bool = False
     # --- OIDC server DNS ---
     OIDC_SERVER_PATH: str = ""  # Default is to get the path from the request
     # Drop the Secure attribute so cookies work over plain HTTP locally.
