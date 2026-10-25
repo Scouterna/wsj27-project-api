@@ -143,7 +143,7 @@ def would_change(member_no: int, values: dict[str, Any]) -> bool:
     """Would `values` change anything, judged against the cached copy?
 
     Synchronous and cheap - a dict lookup - so a caller on a hot path can ask
-    before deciding to await anything at all; `_store_avatar` in
+    before deciding to await anything at all; `_store_token_values` in
     authenctication.py does exactly that, on every authenticated request.
     `ensure_values` asks again under the lock, so this is an optimisation and
     never the thing that makes a write correct.
