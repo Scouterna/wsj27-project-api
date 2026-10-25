@@ -1,9 +1,9 @@
-"""The avatar URL reaches this app in the token and nowhere else.
+"""The avatar URL and Scouterna address reach this app in the token and nowhere else.
 
-So `_store_avatar` runs on every authenticated request, which is only tenable
-because it is cheap and because it cannot take a request down with it. These
-cover both halves: what it declines to do, and that a failed write stays a log
-line rather than an exception on the auth path.
+So `_store_token_values` runs on every authenticated request, which is only
+tenable because it is cheap and because it cannot take a request down with it.
+These cover both halves: what it declines to do, and that a failed write stays a
+log line rather than an exception on the auth path.
 
 Whether a write is actually sent is scoutnet_db's decision (`ensure_values`,
 tested in test_scoutnet_db.py); here it is stubbed out to record the call.
@@ -15,9 +15,10 @@ import logging
 import pytest
 
 from app import scoutnet_db
-from app.authenctication import AuthUser, _avatar_tasks, _store_avatar
+from app.authenctication import AuthUser, _store_token_values, _token_value_tasks
 
 URL = "https://scoutnet.se/avatars/3073781.jpg"
+EMAIL = "hakan.persson@scouterna.se"
 
 
 def _user(**overrides) -> AuthUser:
@@ -29,6 +30,7 @@ def _user(**overrides) -> AuthUser:
         "member_no": "3073781",
         "roles": ["wsj27:cmt"],
         "picture": URL,
+        "scouterna_email": EMAIL,
     }
     base.update(overrides)
     return AuthUser(**base)
@@ -36,7 +38,7 @@ def _user(**overrides) -> AuthUser:
 
 @pytest.fixture
 def calls(monkeypatch):
-    """Record what _store_avatar hands to scoutnet_db, instead of writing.
+    """Record what _store_token_values hands to scoutnet_db, instead of writing.
 
     `would_change` says yes by default, so each test states its own reason for
     expecting nothing to be offered.
@@ -56,22 +58,42 @@ def _serve(user: AuthUser) -> None:
     """One authenticated request, waiting for the background task it spawns."""
 
     async def run():
-        _store_avatar(user)
-        if _avatar_tasks:
-            await asyncio.gather(*list(_avatar_tasks), return_exceptions=True)
+        _store_token_values(user)
+        if _token_value_tasks:
+            await asyncio.gather(*list(_token_value_tasks), return_exceptions=True)
 
     asyncio.run(run())
 
 
-def test_a_picture_claim_is_offered_to_the_store(calls):
+def test_both_claims_are_offered_to_the_store_in_one_write(calls):
     _serve(_user())
-    assert calls == [(3073781, {"avatar_url": URL})]
+    assert calls == [(3073781, {"avatar_url": URL, "scouterna_email": EMAIL})]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"picture": None}, {"scouterna_email": EMAIL}),
+        ({"picture": ""}, {"scouterna_email": EMAIL}),
+        ({"scouterna_email": None}, {"avatar_url": URL}),
+        ({"scouterna_email": ""}, {"avatar_url": URL}),
+    ],
+    ids=["no-picture", "empty-picture", "no-email", "empty-email"],
+)
+def test_a_missing_claim_leaves_its_stored_value_alone(calls, overrides, expected):
+    """Only what the token carries is offered, so a stored value is never cleared."""
+    _serve(_user(**overrides))
+    assert calls == [(3073781, expected)]
 
 
 @pytest.mark.parametrize(
     "overrides",
-    [{"picture": None}, {"picture": ""}, {"member_no": ""}, {"member_no": "not-a-number"}],
-    ids=["no-claim", "empty-claim", "no-member-no", "unparseable-member-no"],
+    [
+        {"picture": None, "scouterna_email": None},
+        {"member_no": ""},
+        {"member_no": "not-a-number"},
+    ],
+    ids=["no-claims", "no-member-no", "unparseable-member-no"],
 )
 def test_nothing_is_offered_when_there_is_nothing_usable(calls, overrides):
     """user_id would raise on a non-numeric member_no, once per request."""
@@ -79,14 +101,14 @@ def test_nothing_is_offered_when_there_is_nothing_usable(calls, overrides):
     assert calls == []
 
 
-def test_no_task_is_created_when_the_stored_url_already_matches(calls, monkeypatch):
+def test_no_task_is_created_when_the_stored_values_already_match(calls, monkeypatch):
     """The per-request fast path: a dict lookup, and no Task at all."""
     monkeypatch.setattr(scoutnet_db, "would_change", lambda member_no, values: False)
 
     _serve(_user())
 
     assert calls == []
-    assert not _avatar_tasks
+    assert not _token_value_tasks
 
 
 def test_a_failed_write_is_logged_rather_than_raised(monkeypatch, caplog):
@@ -101,4 +123,4 @@ def test_a_failed_write_is_logged_rather_than_raised(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         _serve(_user())  # Must not raise.
 
-    assert "Failed to store avatar URL" in caplog.text
+    assert "Failed to store token values" in caplog.text

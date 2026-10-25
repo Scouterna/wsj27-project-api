@@ -90,8 +90,12 @@ class AuthUser(BaseModel):
     roles: list[str] = Field(default_factory=list)
     # The member's avatar. Null for plenty of people, and carried by the token
     # alone - Scoutnet's participant data has no such field, which is why
-    # _store_avatar() below keeps a copy where the rest of the app can read it.
+    # _store_token_values() below keeps a copy where the rest of the app can read it.
     picture: str | None = None
+    # The member's @scouterna.se address, their Teams/Entra login. Scoutnet has it
+    # in a profile field the project feed leaves out, so it too reaches this app
+    # in the token alone and is kept the same way.
+    scouterna_email: str | None = None
 
     def __str__(self) -> str:
         uid = self.preferred_username or self.member_no
@@ -204,47 +208,52 @@ def _extract_roles(claims: dict[str, Any]) -> list[str]:
     return sorted(roles)
 
 
-# --- Avatar URLs -------------------------------------------------------------
+# --- Values only the token carries ------------------------------------------
 #
-# A member's avatar URL reaches this app in the token and nowhere else: Scoutnet
-# has no such field, so the only moment we can learn it is while serving a
-# request for that member. Every authenticated request therefore offers the
-# current URL to scoutnet_db, which keeps it where the rest of the app - and
-# other readers of the participant record - can see it.
+# A member's avatar URL and Scouterna address reach this app in the token and
+# nowhere else: the participant feed has neither, so the only moment we can
+# learn them is while serving a request for that member. Every authenticated
+# request therefore offers the current values to scoutnet_db, which keeps them
+# where the rest of the app - and other readers of the participant record - can
+# see them.
 #
 # That is only affordable because ensure_values() costs a dict lookup against
-# the cached copy and sends nothing unless the URL actually changed.
+# the cached copy and sends nothing unless a value actually changed.
 
 # create_task keeps only a weak reference to a running task, so a set holds them
 # until they finish. Fire-and-forget on purpose: a Scoutnet round trip must not
 # land on the request path, and Scoutnet being down must not break authentication.
-_avatar_tasks: set[asyncio.Task] = set()
+_token_value_tasks: set[asyncio.Task] = set()
 
 
-def _store_avatar(user: AuthUser) -> None:
-    """Offer this caller's avatar URL to scoutnet_db, in the background."""
+def _store_token_values(user: AuthUser) -> None:
+    """Offer this caller's avatar URL and Scouterna address to scoutnet_db, in the background."""
     # Deferred: scoutnet_db -> scoutnet -> authenctication would be an import cycle.
     from . import scoutnet_db
 
-    if not user.picture or not user.member_no.isdigit():
+    if not user.member_no.isdigit():
+        return
+    # A claim that is missing leaves the stored value alone rather than clearing it.
+    claims = {"avatar_url": user.picture, "scouterna_email": user.scouterna_email}
+    values = {key: value for key, value in claims.items() if value}
+    if not values:
         return
     # Asked synchronously first, so the overwhelmingly common case - the stored
-    # URL already matches - costs a dict lookup rather than a Task per request.
+    # values already match - costs a dict lookup rather than a Task per request.
     # ensure_values() repeats the check under its lock, which is what actually
     # keeps concurrent callers from each writing.
-    values = {"avatar_url": user.picture}
     if not scoutnet_db.would_change(user.user_id, values):
         return
     task = asyncio.create_task(scoutnet_db.ensure_values(user.user_id, values))
-    _avatar_tasks.add(task)
-    task.add_done_callback(_avatar_tasks.discard)
-    task.add_done_callback(_log_avatar_failure)
+    _token_value_tasks.add(task)
+    task.add_done_callback(_token_value_tasks.discard)
+    task.add_done_callback(_log_store_failure)
 
 
-def _log_avatar_failure(task: asyncio.Task) -> None:
+def _log_store_failure(task: asyncio.Task) -> None:
     """Report a failed write rather than leaving an unretrieved task exception."""
     if not task.cancelled() and (exc := task.exception()) is not None:
-        logger.warning("Failed to store avatar URL: %s: %s", type(exc).__name__, exc)
+        logger.warning("Failed to store token values: %s: %s", type(exc).__name__, exc)
 
 
 async def require_auth_user(request: Request) -> AuthUser:
@@ -275,7 +284,8 @@ async def require_auth_user(request: Request) -> AuthUser:
         member_no=claims.get("member_no") or "",
         roles=roles,
         picture=claims.get("picture"),
+        scouterna_email=claims.get("scouterna_email"),
     )
     await track_user(user.preferred_username or user.member_no)
-    _store_avatar(user)
+    _store_token_values(user)
     return user
