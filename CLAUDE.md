@@ -15,10 +15,11 @@ reaches `main` one feature branch at a time, never as "whatever is in `dev`".
   `main` is released at once:** pushed, and tagged with the next `vX.Y.Z` (see
   "Release" below). `main` is never left ahead of `origin/main` or ahead of its
   latest tag.
-- **`dev`** — the integration point, where Campfire meets the API. Everything
-  that is built and testable goes here as early as possible, so Joakim can build
-  against the real API, demonstrations run in dev, and the API docs there are
-  live. Every push to `dev` makes CI publish `:dev`. In the dev environment,
+- **`dev`** — the integration point, where Campfire meets the API. A feature
+  goes here only once Campfire work that uses it is in progress, so Joakim can
+  build against the real API, demonstrations run in dev, and the API docs there
+  are live. Until then it stays on its local branch. Every push to `dev` makes
+  CI publish `:dev`. In the dev environment,
   ArgoCD Image Updater notices the new image and rolls it out within a few
   minutes. Nothing else is needed, so no `rollout restart`.
   - `dev` only ever receives **merges**: of feature branches, and of `main`
@@ -33,9 +34,10 @@ reaches `main` one feature branch at a time, never as "whatever is in `dev`".
 - **`feat/<issue>-<slug>`** (or `fix/`) — for example `feat/16-patrol-write`.
   The issue number in the name is what lets a release go from "issues #9 and
   #22" to branches. Cut from `main`, so each feature can be released on its own.
-  Merged into `dev` as soon as it's worth trying there, then again each time it
-  gets more commits. **Keep the branch until it's released**: it is what gets
-  merged into `main`.
+  **Work in progress stays local**: the branch is neither pushed nor merged into
+  `dev` until Campfire work that uses it is in progress, or Håkan asks. From then
+  on it is merged into `dev` again each time it gets more commits. **Keep the
+  branch until it's released**: it is what gets merged into `main`.
 - **Work that depends on unreleased work** — branch from the branch it depends
   on, not from `main` or `dev`, and say so in the issue's notes ("Needs #1").
   The dependency then shows in both places, and it's clear at release time that
@@ -61,18 +63,21 @@ in wsj27-infra is always Håkan's manual step. Agents never push it.** Pushing t
 
 ## Release
 
-A release is a list of issues. Each maps to its branch, and **only branches that
-are already in `dev` can be released**, since that's where they were tried:
+A release is a list of issues. Each maps to its branch. A branch that Campfire
+uses must already be in `dev`, since that's where the two were tried together.
+A branch that no Campfire work uses never goes to `dev`. It can be released
+straight from its branch once its tests pass, and staging is where it is tried.
 
 ```bash
 git fetch --all --tags
 git branch -a --merged origin/dev --no-merged origin/main   # what dev has that main lacks
+git branch --no-merged origin/main                          # local branches not yet released
 git merge-base --is-ancestor feat/16-patrol-write origin/dev && echo in dev
 ```
 
-The first command also lists branches without an issue that are waiting to go
-out (see the `no-issue-changes-ride-along` memory). Releasing them is a question
-for Håkan, not automatic.
+The first two commands also list branches without an issue that are waiting to
+go out (see the `no-issue-changes-ride-along` memory). Releasing them is a
+question for Håkan, not automatic.
 
 Merging or committing to `main` happens only when Håkan asks for it. Once he
 has, these steps are part of the same job and need no separate go-ahead:
@@ -120,7 +125,8 @@ git checkout -b feat/2-avatar
 # ...commit... and write "Needs #1" in #2's notes
 ```
 
-**Bring it into dev, and again after every new commit on it:**
+**Bring it into dev once Campfire work that uses it is in progress, and again
+after every new commit on it:**
 ```bash
 git checkout dev && git pull
 git merge --no-edit feat/16-patrol-write
