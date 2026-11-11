@@ -14,7 +14,8 @@ reaches `main` one feature branch at a time, never as "whatever is in `dev`".
   chosen for a release, and `hotfix/...` branches. **Anything that lands on
   `main` is released at once:** pushed, and tagged with the next `vX.Y.Z` (see
   "Release" below). `main` is never left ahead of `origin/main` or ahead of its
-  latest tag.
+  latest tag. The exception is docs-only commits: they may sit on `main`
+  unpushed and untagged, and go out with the next release.
 - **`dev`** — the integration point, where Campfire meets the API. A feature
   goes here only once Campfire work that uses it is in progress, so Joakim can
   build against the real API, demonstrations run in dev, and the API docs there
