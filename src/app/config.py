@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     API_DOCS: bool = False
     # --- OIDC server DNS ---
     OIDC_SERVER_PATH: str = ""  # Default is to get the path from the request
+    # The `aud` every accepted token must carry: auth-api's AUDIENCE. A token minted
+    # for another purpose (auth-api's impersonation refresh token) carries another
+    # one and must not pass as an access token.
+    OIDC_AUDIENCE: str = "wsj27"
     # Drop the Secure attribute so cookies work over plain HTTP locally.
     INSECURE_COOKIES: bool = False
     # --- Metrics ---

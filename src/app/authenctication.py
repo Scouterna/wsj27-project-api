@@ -1,11 +1,14 @@
 import asyncio
 import logging
+import time
+from dataclasses import dataclass, replace
 from typing import Any
 from urllib.parse import urljoin
 
 import httpx
 from fastapi import HTTPException, Request, status
-from joserfc import jwt
+from joserfc import jws, jwt
+from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
 from pydantic import BaseModel, Field
 
@@ -15,7 +18,22 @@ from .config import get_settings
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-_jwks_keyset_cache: dict[str, KeySet] = {}
+
+@dataclass(frozen=True)
+class _AuthServer:
+    """What we trust about auth-api, read from its discovery document."""
+
+    issuer: str
+    keyset: KeySet
+    fetched_at: float
+
+
+_auth_server_cache: dict[str, _AuthServer] = {}
+
+# A token whose `kid` we don't know makes us fetch the key set again, so a key
+# rotation in auth-api is picked up without restarting us. Anyone can send such a
+# token, so at most once per this many seconds.
+_KEY_REFRESH_INTERVAL_SECONDS = 60
 
 
 # --- Checking roles -----------------------------------------------------------
@@ -122,16 +140,33 @@ class AuthUser(BaseModel):
         return role_suffixes(self.roles, prefix)
 
 
-async def get_jwks_keyset(request: Request) -> KeySet | None:
+async def get_auth_server(request: Request, *, refresh: bool = False) -> _AuthServer | None:
     """
-    Convert the JWKS dictionary into a key set usable for verification.
+    auth-api's issuer and key set, from its discovery document.
+
+    Cached; `refresh` fetches again unless the cached copy is younger than
+    _KEY_REFRESH_INTERVAL_SECONDS. A failed fetch returns the cached copy if there
+    is one, so auth-api being briefly unreachable doesn't lock everyone out.
     """
     cache_key = settings.OIDC_SERVER_PATH or (str(request.base_url) + "/auth")
 
-    if cache_key in _jwks_keyset_cache:
-        return _jwks_keyset_cache[cache_key]
+    cached = _auth_server_cache.get(cache_key)
+    if cached and (not refresh or time.monotonic() - cached.fetched_at < _KEY_REFRESH_INTERVAL_SECONDS):
+        return cached
 
-    url = urljoin(str(cache_key), ".well-known/openid-configuration")
+    fetched = await _fetch_auth_server(cache_key)
+    if fetched is None:
+        if cached:
+            # Keep throttling while auth-api is down, or every unknown-kid token
+            # would wait out a fetch timeout.
+            _auth_server_cache[cache_key] = replace(cached, fetched_at=time.monotonic())
+        return cached
+    _auth_server_cache[cache_key] = fetched
+    return fetched
+
+
+async def _fetch_auth_server(base: str) -> _AuthServer | None:
+    url = urljoin(base, ".well-known/openid-configuration")
     try:
         async with httpx.AsyncClient(timeout=5.0) as http_client:
             response = await http_client.get(url)
@@ -141,7 +176,13 @@ async def get_jwks_keyset(request: Request) -> KeySet | None:
         logger.warning("Failed to fetch %s: %s", url, exc)
         return None
 
-    url = oid_config["jwks_uri"]
+    # Without an issuer to compare against we could only check signatures, which
+    # would accept a token from any auth-api instance that shares the key.
+    issuer = oid_config.get("issuer")
+    url = oid_config.get("jwks_uri")
+    if not issuer or not url:
+        logger.warning("Discovery document at %s lacks issuer or jwks_uri", base)
+        return None
     try:
         async with httpx.AsyncClient(timeout=5.0) as http_client:
             response = await http_client.get(url)
@@ -153,21 +194,43 @@ async def get_jwks_keyset(request: Request) -> KeySet | None:
 
     try:
         keyset = KeySet.import_key_set(jwks_dict)
-        _jwks_keyset_cache[cache_key] = keyset
-        return keyset
     except Exception as exc:
         logger.warning("Failed to parse JWKS: %s", exc)
         return None
+    return _AuthServer(issuer=issuer, keyset=keyset, fetched_at=time.monotonic())
+
+
+def _token_kid(token: str) -> str | None:
+    try:
+        kid = jws.extract_compact(token.encode()).headers().get("kid")
+    except JoseError:
+        return None  # not a JWS at all; jwt.decode() below says so properly
+    return kid if isinstance(kid, str) else None
+
+
+def _knows_kid(keyset: KeySet, kid: str) -> bool:
+    return any(key.kid == kid for key in keyset.keys)
 
 
 async def decode_access_token(token: str, request: Request) -> dict[str, Any]:
-    keyset = await get_jwks_keyset(request)
-    if keyset is None:
+    server = await get_auth_server(request)
+    if server is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Token validation unavailable")
 
+    kid = _token_kid(token)
+    if kid and not _knows_kid(server.keyset, kid):
+        server = await get_auth_server(request, refresh=True) or server
+
     try:
-        token_obj = jwt.decode(token, keyset)
-        registry = jwt.JWTClaimsRegistry(leeway=30)
+        token_obj = jwt.decode(token, server.keyset)
+        # A valid signature only says which key signed it. iss pins the auth-api
+        # instance, so another environment's tokens fail even if it shared our key;
+        # aud excludes tokens auth-api mints for other purposes.
+        registry = jwt.JWTClaimsRegistry(
+            leeway=30,
+            iss={"essential": True, "value": server.issuer},
+            aud={"essential": True, "value": settings.OIDC_AUDIENCE},
+        )
         registry.validate(token_obj.claims)
         return dict(token_obj.claims)
     except Exception as exc:
