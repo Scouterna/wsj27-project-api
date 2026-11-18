@@ -16,6 +16,8 @@ from .case import router as case_router
 from .config import get_settings
 from .db import close_db_connection, connect_to_db, db_configured
 from .participants import router as participants_router
+from .poll import poll_init, poll_shutdown
+from .poll import router as poll_router
 from .roles import router as roles_router
 from .scoutnet import router as scoutnet_router
 from .scoutnet import scoutnet_init, scoutnet_shutdown
@@ -43,11 +45,14 @@ async def lifespan(app: FastAPI):
     if db_configured():
         await db_init_tables()
     await scoutnet_init()  # Fetch Scoutnet project data
+    if db_configured():
+        await poll_init()  # After Scoutnet: its messages go to the troops found there
 
     try:
         logger.info("wsj27-project-api started and is accepting connections")
         yield  # FastAPI runs here!
     finally:
+        await poll_shutdown()
         await scoutnet_shutdown()
         await active_users_shutdown()
         await close_db_connection()
@@ -87,12 +92,13 @@ instrumentator.expose(app)
 
 # --- Include the API routers ---
 # app.include_router(router)
-# /cases is the only router that touches the database, so it is left out
+# /cases and /polls are the routers that touch the database, so they are left out
 # entirely when none is configured rather than mounted to fail per-request.
 if db_configured():
     app.include_router(case_router, prefix="/cases", tags=["Cases"])
+    app.include_router(poll_router, prefix="/polls", tags=["Polls"])
 else:
-    logger.warning("No database configured - the /cases endpoints are not registered")
+    logger.warning("No database configured - the /cases and /polls endpoints are not registered")
 app.include_router(participants_router, prefix="/participants", tags=["Participants"])
 # Same prefix as participants_router on purpose: roles.py owns the role model and
 # is kept free of other dependencies, but the URL stays /participants/roles,

@@ -23,8 +23,8 @@ def db_configured() -> bool:
     """Whether a database is configured at all.
 
     An empty POSTGRES_DSN is a deliberate "run without a database" mode: the
-    app starts, and main.py leaves out the only feature that needs one (the
-    /cases router). Everything else works unchanged.
+    app starts, and main.py leaves out the features that need one (the /cases
+    and /polls routers). Everything else works unchanged.
     """
     return bool(settings.POSTGRES_DSN)
 
@@ -32,7 +32,7 @@ def db_configured() -> bool:
 async def connect_to_db() -> Pool | None:
     global pg_pool
     if not db_configured():
-        logger.warning("POSTGRES_DSN is not set - starting without a database; /cases is disabled")
+        logger.warning("POSTGRES_DSN is not set - starting without a database; /cases and /polls are disabled")
         return None
     if pg_pool is None:
         logger.info("Connecting to DB")

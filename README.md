@@ -32,6 +32,7 @@ a finished product. Expect rough edges and breaking changes.
 | `GET /participants/roles` | `member_no -> roles` map for auth-api and other consumers. |
 | `GET /scoutnet/refresh` | Force a Scoutnet cache refresh. |
 | `/cases/*` | Case management — only registered when `POSTGRES_DSN` is set. |
+| `/polls/*` | Polls that troop leaders answer for their troop — only registered when `POSTGRES_DSN` is set. |
 | `GET /docs` | Swagger UI (also `/redoc`, `/openapi.json`). Only with `API_DOCS=true`, so not in prod. |
 
 Auth follows the same model as the rest of the WSJ27 apps: a
@@ -101,7 +102,7 @@ cd src && uv run python start.py
 ```
 
 Leave `POSTGRES_DSN` empty to run without a database — the app still starts
-and serves participants, roles and Scoutnet data; only `/cases` is unavailable.
+and serves participants, roles and Scoutnet data; only `/cases` and `/polls` are unavailable.
 
 With docker-compose (brings up Postgres too):
 

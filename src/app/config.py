@@ -63,11 +63,15 @@ class Settings(BaseSettings):
     PERSIST_DIR: Path = Path("/app/persist")  # Must match volume mountPath
     # --- Database ---
     # Optional: unset means no database. The app then starts without a
-    # connection and drops the /cases router, which is the only feature that
-    # needs one; participants, roles and Scoutnet data are unaffected.
+    # connection and drops the /cases and /polls routers, the features that
+    # need one; participants, roles and Scoutnet data are unaffected.
     # Temporary, for clusters that have no Postgres yet (scoutweb) — set this
     # as soon as one is available.
     POSTGRES_DSN: str = ""
+    # --- Polls ---
+    # Campfire's address in this environment. The messages about a poll end with a
+    # link to the poll's page under it. Unset means the messages carry no link.
+    CAMPFIRE_URL: str = ""
     # --- Serving ---
     ROOT_PATH: str = ""
     PORT: int = 8000
