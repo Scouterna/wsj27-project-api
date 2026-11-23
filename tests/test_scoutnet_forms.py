@@ -74,13 +74,13 @@ def test_decoder_merges_assigned_roles_into_the_record(monkeypatch):
     assert partdata[scoutnet_db.FIELD] == {"roles": [access]}
 
 
-def _decode(raw: dict) -> dict:
+def _decode(raw: dict, questions: dict | None = None) -> dict:
     project = ScoutnetProjectData(
         project_id=1,
         project_name="Test project",
         groups={},
         participants={"participants": {"1": raw}, "labels": {"sex": {}}},
-        questions={"questions": {}},
+        questions={"questions": questions or {}},
     )
     cache = ProjectCache()
     scoutnet_forms_decoder([project], cache)
@@ -125,3 +125,18 @@ def test_ist_without_patrull_keep_their_avdelning_as_patrol():
 def test_a_deltagares_avdelning_is_never_their_patrol():
     raw = _raw_participant(questions={"84942": "58000", "88168": "17"})
     assert _decode(raw)["patrol"] == ""
+
+
+def test_photo_consent_is_contact_info_from_either_form():
+    checkbox = {"type": "boolean", "choices": {"1": {"option": "checked"}, "0": {"option": "unchecked"}}}
+    questions = {
+        "93961": {**checkbox, "question": "Jag samtycker till publicering av bilder på mitt barn"},
+        "93216": {**checkbox, "question": "Fotografering"},
+    }
+    deltagare = _raw_participant(questions={"84942": "58000", "93961": "1"})
+    leader = _raw_participant(questions={"90951": "62319", "93216": "0"})
+    unanswered = _raw_participant(questions={"84942": "58000"})
+    assert _decode(deltagare, questions)["contact_info"]["Samtycken"] == {"photoConsent": "Ja"}
+    assert _decode(leader, questions)["contact_info"]["Samtycken"] == {"photoConsent": "Nej"}
+    assert "Samtycken" not in _decode(unanswered, questions)["contact_info"]
+    assert "Samtycken" not in str(_decode(deltagare, questions)["forms_data"])

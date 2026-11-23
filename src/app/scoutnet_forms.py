@@ -120,6 +120,11 @@ def _decode_answer(qdef: dict, raw, unmapped: Counter | None = None):
     if qdef["type"] == "choice":
         return _decode_choice(qdef, raw, unmapped)
 
+    # A checkbox: "1" checked, "0" unchecked. Worded like the Ja/Nej choice
+    # questions; anything else is no answer, never a silent "Nej".
+    if qdef["type"] == "boolean":
+        return {"1": "Ja", "0": "Nej"}.get(str(raw))
+
     # Guardian contact details arrive as a JSON-encoded string regardless of the
     # declared question type: {"linked_id": ..., "value": "..."}.
     if isinstance(raw, str) and raw.startswith("{") and raw.endswith("}"):

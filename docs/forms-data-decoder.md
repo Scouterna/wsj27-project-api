@@ -139,6 +139,18 @@ Three things about those questions, all handled in the template:
   keeps a single label. Ids `90961`-`90964` run in sequence, which is what
   identifies the unnumbered relation field as next of kin 2's.
 
+### Photo consent (section `Samtycken`)
+
+Both forms ask whether pictures may be published: `93961` "Jag samtycker till
+publicering av bilder på mitt barn" (participant form, tab `Godkännande`) and
+`93216` "Fotografering" (leaders' form). Both share the key `photoConsent` with the
+label normalised to `Fotografering`, since the participant wording would be wrong
+for an adult. They go in `contact_info`, because the people taking pictures have
+basic access, not the health role, under a section named `Samtycken` so later
+consent questions can join it. They are checkboxes (`boolean`), decoded to
+`Ja`/`Nej` like the choice questions. As of 2026-11-23 no IST has an answer, so
+for the IST the question is presumably never shown.
+
 The `Annan nödkontakt` section is leaders-only and names contacts to reach
 *instead of* the next of kin. It has its own keys (`emergencyContact1*`,
 `emergencyContact2*`, gated by `hasAlternateEmergencyContact`), so a GUI can

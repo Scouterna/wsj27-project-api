@@ -84,6 +84,12 @@
           "key": "alternateEmail",
           "label": "Alternativ e-postadress"
         }
+      },
+      "Samtycken": {
+        "93216": {
+          "key": "photoConsent",
+          "label": "Fotografering"
+        }
       }
     },
     "Hälsoinformation": {
@@ -593,6 +599,12 @@
         "88137": {
           "key": "nextOfKin2Relation",
           "label": "Närstående 2 - Relation"
+        }
+      },
+      "Samtycken": {
+        "93961": {
+          "key": "photoConsent",
+          "label": "Fotografering"
         }
       }
     }
