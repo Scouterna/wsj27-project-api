@@ -48,7 +48,7 @@ live at the top of `src/app/participants.py`:
 | Caller | `name` / `basic` | `full` |
 |---|---|---|
 | Avdelningsledare (`wsj27:al:<troop>`) | Own troop only | Own troop only |
-| Kontingentledning (`wsj27:cmt...`) | Every participant | With `wsj27:cmt:support:halsa` or `wsj27:access:Hälsa plus intern information` |
+| Kontingentledning (`wsj27:cmt...`) | Every participant | With `wsj27:cmt:support:halsa` or `wsj27:legacy-access:Hälsa plus intern information` |
 | Anyone else | — | — |
 
 A leader's authority is their troop and stops there: an access role raises how
@@ -78,12 +78,10 @@ an exception for the caller's own record.
   health authorisation. So a leader reading their own troop sees the young
   people in full and their fellow leaders without those two fields.
 - A participant who is `Kontingentledning` has their `forms_data` withheld from
-  everyone but holders of `wsj27:access:Hälsa plus intern information`. The
-  Support function's `wsj27:cmt:support:halsa` is deliberately not enough here:
-  it covers the contingent's health work, not the contingent leadership's own
-  answers. **Temporarily, as of 2026-09-20, this field is withheld from every
-  caller including that role** — see the comment in `_withheld()` for how to
-  restore the rule.
+  everyone but holders of `wsj27:access:cmt-health-info`, a role given by hand
+  through the roles API. Neither health role in the table is enough here: they
+  cover the contingent's health work, not the contingent leadership's own
+  answers. The role only lifts this withhold, so its holder also needs `full`.
 
 Refusals come in two kinds. A caller with no access to a record gets **404**,
 with the same body a record that does not exist returns, so a refusal cannot be

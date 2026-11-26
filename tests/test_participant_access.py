@@ -500,19 +500,11 @@ def test_adults_names_need_a_troop_or_cmt(client, roles):
 # --- Kontingentledning's own health answers -----------------------------------
 #
 # A narrower rule than the leaders' one above: it drops forms_data only, and the
-# one role that unlocks it is the per-person grant from the Scoutnet form. The
-# Support function's health role passes every other health check in this file
-# and must not pass this one.
-#
-# TEMPORARY (2026-09-20): the field is withheld from *every* caller for now, so
-# these tests run over both role sets and the test for the permanent rule is
-# parked as xfail(strict) below. Putting the role check back in `_withheld()`
-# fails exactly three cases, which is the restore checklist: drop the xfail
-# marker (strict, so it reports as a failure the moment it passes), and drop
-# HEALTH_ACCESS from CMT_HEALTH_CALLERS so only CMT_HEALTH is asserted withheld.
+# one role that unlocks it is given by hand. Both health roles pass every other
+# health check in this file and must not pass this one (#45).
 
+CMT_HEALTH_INFO = "wsj27:access:cmt-health-info"
 CMT_HEALTH_CALLERS = [(CMT_HEALTH,), (CMT_PROGRAM, HEALTH_ACCESS)]
-TEMPORARY_BLOCK = "TEMPORARY (2026-09-20): CMT health answers are withheld from every caller"
 
 
 @pytest.mark.parametrize("roles", CMT_HEALTH_CALLERS)
@@ -526,12 +518,23 @@ def test_cmt_health_answers_are_withheld(client, infolevel, roles):
     assert row["contact_info"] and row["email"] == "cee@example.org"
 
 
-@pytest.mark.xfail(strict=True, reason=TEMPORARY_BLOCK)
-def test_cmt_health_answers_reach_the_internal_information_role(client):
-    """The permanent rule, parked: only this role gets the answers back."""
-    response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/cmt?infolevel=full")
+@pytest.mark.parametrize("roles", CMT_HEALTH_CALLERS)
+def test_cmt_health_answers_reach_the_cmt_health_info_role(client, roles):
+    response = client.as_user(*roles, CMT_HEALTH_INFO).get("/participants/troopinfo/cmt?infolevel=full")
     assert response.status_code == 200
     assert _by_name(response)["Cee Cmt"]["forms_data"]
+
+
+def test_the_cmt_health_info_role_does_not_grant_full_on_its_own(client):
+    """`infolevel=full` still needs a health role; this one only lifts the CMT withhold."""
+    response = client.as_user(CMT_PROGRAM, CMT_HEALTH_INFO).get("/participants/troopinfo/cmt?infolevel=full")
+    assert response.status_code == 403
+
+
+def test_the_cmt_health_info_role_keeps_basic_without_health_answers(client):
+    response = client.as_user(CMT_PROGRAM, CMT_HEALTH_INFO).get("/participants/troopinfo/cmt?infolevel=basic")
+    assert response.status_code == 200
+    assert "forms_data" not in _by_name(response)["Cee Cmt"]
 
 
 @pytest.mark.parametrize("roles", CMT_HEALTH_CALLERS)
@@ -556,12 +559,10 @@ def test_the_cmt_rule_leaves_everyone_elses_health_answers_alone(client):
 
 
 def test_the_internal_information_role_keeps_its_other_grants(client):
-    """Withholding one field must not cost the role everything else it grants.
+    """The form's grant no longer reaches CMT's answers, but it still grants "full".
 
-    Neutering INTERNAL_INFO_ROLE itself is the quicker way to switch the CMT
-    rule off and the wrong one: the same constant is half of HEALTH_ROLES, so
-    its holders would drop to basic over the *whole* contingent. Stated here so
-    that shortcut fails a test rather than a user.
+    Campfire treats its holders as health readers, so dropping it from
+    HEALTH_ROLES would turn their requests into 403s. That waits for #44.
     """
     response = client.as_user(CMT_PROGRAM, HEALTH_ACCESS).get("/participants/troopinfo/18?infolevel=full")
     assert response.status_code == 200  # a 403 here means the role stopped granting "full"

@@ -25,9 +25,8 @@ who is themselves an Avdelningsledare keeps their contact_info and forms_data
 out of every response except to Kontingentledning with health authorisation — a
 leader reading their own troop sees the young people in full and their fellow
 leaders as names. And a participant who is Kontingentledning keeps their
-forms_data for holders of `wsj27:legacy-access:Hälsa plus intern information` alone —
-though as of 2026-09-20 it is temporarily withheld from every caller, see
-`_withheld()`.
+forms_data for holders of `wsj27:access:cmt-health-info` alone, a role given by
+hand (#45).
 """
 
 import logging
@@ -60,11 +59,10 @@ REQUIRED_ACCESS = {"name": BASIC_ACCESS, "basic": BASIC_ACCESS, "full": FULL_ACC
 # people, slugified out of the Funktion/Roll CSV ("Hälsa" -> "halsa") - this
 # also covers "Hälsa PL", since roles.py drops that suffix and mints the same
 # role for both. The second is granted per person in the Scoutnet form and cuts
-# across functions; it is also the only one that reaches Kontingentledning's own
-# health answers, so it is named on its own as well.
+# across functions. Neither reaches Kontingentledning's own health answers, see
+# `_withheld()`.
 CMT_HEALTH_ROLE = "wsj27:cmt:support:halsa"
-INTERNAL_INFO_ROLE = "wsj27:legacy-access:Hälsa plus intern information"
-HEALTH_ROLES = frozenset({CMT_HEALTH_ROLE, INTERNAL_INFO_ROLE})
+HEALTH_ROLES = frozenset({CMT_HEALTH_ROLE, "wsj27:legacy-access:Hälsa plus intern information"})
 
 # Whose name any leader or CMT member may read, wherever they are (#22). Only
 # the name: every other level still follows the troop rules.
@@ -142,26 +140,17 @@ def _withheld(user: AuthUser) -> dict[str, set[str]]:
         contingent-wide full grant — so ask for it with no troop, leaving the
         caller's own troop out of it. Being a leader of the troop is what does
         *not* count here, and passing None is what makes sure it cannot.
-      * Kontingentledning's own forms_data needs the per-person grant from the
-        Scoutnet form — `INTERNAL_INFO_ROLE`. The Support function's health role
-        is deliberately not enough: it covers the contingent's health work, not
-        the contingent leadership's own answers. **Withheld from everyone for
-        now**, see below.
+      * Kontingentledning's own forms_data needs `wsj27:access:cmt-health-info`,
+        a role given by hand. Neither of the HEALTH_ROLES is enough: they cover
+        the contingent's health work, not the contingent leadership's own
+        answers. On its own the role opens nothing, since `infolevel=full` must
+        be granted first; its holders are people in Health, who have that (#45).
     """
     withheld: dict[str, set[str]] = {}
     if _troop_access(user, None) != FULL_ACCESS:
         withheld["Avdelningsledare"] = {"contact_info", "forms_data"}
-
-    # TEMPORARY (2026-09-20): nobody reads Kontingentledning's own health
-    # answers, not even INTERNAL_INFO_ROLE. To restore the permanent rule, put
-    # `if not user.has_role(INTERNAL_INFO_ROLE):` back in front of the line
-    # below; the suite then names the three test changes that go with it (drop
-    # the xfail marker, and drop HEALTH_ACCESS from CMT_HEALTH_CALLERS).
-    #
-    # Deliberately *only* this line: INTERNAL_INFO_ROLE is also half of
-    # HEALTH_ROLES, so disabling the role itself would revoke `infolevel=full`
-    # contingent-wide for everyone who has no other health grant.
-    withheld["Kontingentledning"] = {"forms_data"}
+    if not user.has_role("wsj27:access:cmt-health-info"):
+        withheld["Kontingentledning"] = {"forms_data"}
     return withheld
 
 
@@ -171,7 +160,7 @@ def _project(participant: dict[str, Any], infolevel: InfoLevel, withheld: dict[s
     Adults' own details are cut further than the level asked for: a leader
     reading their own troop gets the young people in full but their fellow
     leaders stripped of contact_info and forms_data, and Kontingentledning's
-    health answers go only to the internal-information role. Dropped from the
+    health answers go only to the cmt-health-info role. Dropped from the
     record rather than refused, because a listing mixes both kinds of
     participant and a 403 would take the whole list down over one row.
     """
