@@ -10,7 +10,7 @@ who removed, so the notes keep the history.
 
 Who may reach a case is decided by its `type`, its `secrecy_level` and its
 `extra_access` list; the rules are spelled out at the top of the internal helpers. Each
-type in `CASE_TYPES` names the role it needs, and an `avdelning` case is also
+type in `CASE_TYPES` names the roles that give it, and an `avdelning` case is also
 limited to the leaders of its own troop. A case the caller may not reach answers
 404, the same as one that does not exist. A closed case can be reopened, and
 nothing else about it can be changed until it is.
@@ -66,10 +66,19 @@ ATTACHMENT_DIR = settings.PERSIST_DIR / "attachments"
 # Above twice this, Pillow refuses to decode at all; a 48 MP phone photo is well below.
 Image.MAX_IMAGE_PIXELS = 50_000_000
 
-# Finite but extendable set of case types, each with the role a caller needs for it.
-# An avdelning case needs the leader role for its own troop: wsj27:al:17 reaches
-# troop 17's cases, and a bare wsj27:al reaches none.
-CASE_TYPES = {"hälsa": "wsj27:cmt:support:halsa", "cmt": "wsj27:cmt", "avdelning": "wsj27:al"}
+# Finite but extendable set of case types, each with the roles that give it; any one
+# of them is enough. An avdelning case needs the leader role for its own troop:
+# wsj27:al:17 reaches troop 17's cases, and a bare wsj27:al reaches none.
+CASE_TYPES = {
+    "hälsa": ["wsj27:cmt:support:halsa"],
+    "avdelningssupport": [
+        "wsj27:cmt:support:avdelningssupport",
+        "wsj27:cmt:support:specialsupport",
+        "wsj27:cmt:support:fa",
+    ],
+    "cmt": ["wsj27:cmt"],
+    "avdelning": ["wsj27:al"],
+}
 
 
 class CaseCreate(BaseModel):
@@ -482,8 +491,8 @@ def _types_for(user: AuthUser) -> list[str]:
     """The types the user may create cases of. With none, all of /cases is closed to them."""
     return [
         case_type
-        for case_type, role in CASE_TYPES.items()
-        if user.has_role(role) and (case_type != "avdelning" or user.role_suffixes("wsj27:al"))
+        for case_type, roles in CASE_TYPES.items()
+        if user.has_any_role(roles) and (case_type != "avdelning" or user.role_suffixes("wsj27:al"))
     ]
 
 
@@ -491,7 +500,7 @@ def _holds_role(user: AuthUser, case_type: str, troop: str) -> bool:
     """Holds the role that a case of this type, for this troop, needs."""
     if case_type == "avdelning":
         return user.has_role(f"wsj27:al:{troop}")
-    return case_type in CASE_TYPES and user.has_role(CASE_TYPES[case_type])
+    return case_type in CASE_TYPES and user.has_any_role(CASE_TYPES[case_type])
 
 
 def _is_role_holder(user: AuthUser, case) -> bool:

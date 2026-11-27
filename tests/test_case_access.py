@@ -25,6 +25,7 @@ from app.authenctication import AuthUser, require_auth_user
 
 ME, OTHER = 1234567, 999  # the caller, and whoever else created a case or wrote a note
 CMT_HEALTH = "wsj27:cmt:support:halsa"
+UNIT_SUPPORT = "wsj27:cmt:support:avdelningssupport"
 CMT_IT = "wsj27:cmt:admin:it"
 LEADER_18 = "wsj27:al:18"
 
@@ -117,6 +118,14 @@ def _as(who: str, **case_fields) -> tuple[list[str], dict]:
         ([CMT_IT], "hälsa", "18", False),
         (["wsj27:cmt:support"], "hälsa", "18", False),  # the function, not the health part of it
         (["wsj27:cmt:support:halsax"], "hälsa", "18", False),  # a string prefix of halsa
+        ([UNIT_SUPPORT], "avdelningssupport", "18", True),
+        (["wsj27:cmt:support:specialsupport"], "avdelningssupport", "18", True),
+        (["wsj27:cmt:support:fa"], "avdelningssupport", "18", True),  # the head of Support
+        (["wsj27:cmt:admin:fa"], "avdelningssupport", "18", False),  # another function's head
+        (["wsj27:cmt:support"], "avdelningssupport", "18", False),  # the function, not one of its three parts
+        ([CMT_HEALTH], "avdelningssupport", "18", False),  # health and unit support are kept apart
+        ([UNIT_SUPPORT], "hälsa", "18", False),
+        ([UNIT_SUPPORT], "cmt", "18", True),  # unit support are CMT members too
         ([CMT_HEALTH], "cmt", "18", True),  # the health team are CMT members too
         ([CMT_IT], "cmt", "18", True),
         (["wsj27:cmt"], "cmt", "18", True),  # not yet in the Funktion/Roll CSV
@@ -328,6 +337,8 @@ def test_callers_with_no_case_type_are_refused_before_the_database(method, path,
     ("roles", "types"),
     [
         ([CMT_HEALTH], ["hälsa", "cmt"]),  # the health team are CMT members too
+        ([UNIT_SUPPORT], ["avdelningssupport", "cmt"]),
+        (["wsj27:cmt:support:fa", UNIT_SUPPORT], ["avdelningssupport", "cmt"]),  # two of its roles, one type
         ([CMT_IT], ["cmt"]),
         (["wsj27:cmt"], ["cmt"]),  # not yet in the Funktion/Roll CSV
         (["wsj27:cmt:support"], ["cmt"]),  # the function, not the health part of it
@@ -435,6 +446,8 @@ BODY = {"title": "t", "type": "hälsa", "troop": "18"}
     ("roles", "body"),
     [
         ([CMT_IT], {}),  # a hälsa case without the health role
+        ([UNIT_SUPPORT], {}),
+        ([CMT_HEALTH], {"type": "avdelningssupport"}),
         ([CMT_HEALTH], {"type": "avdelning"}),  # troop cases are for the troop's leaders
         ([LEADER_18], {"type": "avdelning", "troop": "19"}),
         ([LEADER_18], {"type": "cmt"}),
@@ -459,6 +472,13 @@ def test_a_case_is_stored_with_the_secrecy_level_sent_or_3(sent, stored):
     response = _client(CMT_HEALTH).post("/cases", json=BODY | sent)
     assert response.status_code == 201
     assert response.json()["secrecy_level"] == stored
+
+
+@pytest.mark.parametrize("role", [UNIT_SUPPORT, "wsj27:cmt:support:specialsupport", "wsj27:cmt:support:fa"])
+def test_each_unit_support_role_creates_avdelningssupport_cases(role):
+    response = _client(role).post("/cases", json=BODY | {"type": "avdelningssupport"})
+    assert response.status_code == 201
+    assert response.json()["type"] == "avdelningssupport"
 
 
 @pytest.mark.parametrize(
