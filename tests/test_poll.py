@@ -639,6 +639,21 @@ def test_message_text_gives_the_closing_time_in_swedish_time_and_the_link(db, cl
     assert posted[0][1].endswith("kl. 04:00. https://campfire.example.org/polls/7")
 
 
+@pytest.mark.parametrize(
+    ("title", "start"),
+    [
+        ("Avdelningens hälsa", "Ny avstämning: Avdelningens hälsa. Svara"),
+        ("Kommer du?", "Ny avstämning: Kommer du? Svara"),
+        ("Klart!  ", "Ny avstämning: Klart! Svara"),
+        ("Version 2.", "Ny avstämning: Version 2. Svara"),
+    ],
+)
+def test_a_title_that_ends_a_sentence_gets_no_full_stop_after_it(db, clock, posted, title, start):
+    db.polls = [_poll(title=title)]
+    _pass(clock, 0, posted)
+    assert posted[0][1].startswith(start)
+
+
 def test_a_troops_responses_come_from_every_poll_and_only_that_troop(db):
     db.responses = [
         _response(poll_id=1, troop="10", status="grön"),
@@ -858,7 +873,7 @@ def test_a_persons_response_is_sent_to_them(db, posted, monkeypatch):
     db.polls = [_individual()]
     _client(LEADER_1, member=1000001).put("/polls/1/response", json={"status": "Ja"})
     assert posted == [
-        (1000001, "Svar sparat: Kommer du på mötet?. Svaret kan ändras i Campfire till lör 31 juli kl. 04:00.")
+        (1000001, "Svar sparat: Kommer du på mötet? Svaret kan ändras i Campfire till lör 31 juli kl. 04:00.")
     ]
 
 

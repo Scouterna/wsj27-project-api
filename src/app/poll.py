@@ -384,7 +384,11 @@ def _message(poll, text: str) -> str:
     """`text` filled in with the poll's title and its closing time in Swedish, and the poll's link after it."""
     closes = poll["closes_at"].astimezone(STOCKHOLM)
     closes_text = f"{WEEKDAYS[closes.weekday()]} {closes.day} {MONTHS[closes.month - 1]} kl. {closes:%H:%M}"
-    message = text.format(title=poll["title"], closes=closes_text)
+    title = poll["title"].rstrip()
+    # A title that ends a sentence itself, like "Kommer du?", takes no full stop after it.
+    if title[-1] in ".?!":
+        text = text.replace("{title}.", "{title}")
+    message = text.format(title=title, closes=closes_text)
     if settings.CAMPFIRE_URL:
         message += " " + settings.CAMPFIRE_URL.rstrip("/") + CAMPFIRE_POLL_PATH.format(poll_id=poll["id"])
     return message
