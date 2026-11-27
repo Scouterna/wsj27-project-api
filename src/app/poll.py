@@ -26,11 +26,15 @@ A poll can be changed until it closes, but once it has opened its `opens_at`,
 
 Messages: a loop runs every minute and sends each open poll's messages as they
 fall due, at the points in `MESSAGES`. The first tells everyone in the poll that
-it has opened; the later ones remind those who have not responded, unless the
-poll has `reminders` turned off. The poll's `messages_sent` counts how many have
-gone out. A message is claimed by counting it before it is sent, so it goes out
-once, also across restarts and with several pods. After downtime every message
-that fell due is sent, in order.
+it has opened, unless the poll has `opening_message` turned off; the later ones
+remind those who have not responded, unless the poll has `reminders` turned off.
+The poll's `messages_sent` counts how many have fallen due, sent or, when turned
+off, passed over; one turned on after its time is not sent. A message is claimed by counting it before it is
+sent, so it goes out once, also across restarts and with several pods. After
+downtime every message that fell due is sent, in order.
+
+Each response also gets a receipt, `RECEIPT`, to those who gave it: the troop's
+leader channel for a troop poll, the person for an individual poll.
 
 A troop poll's messages are meant for the troop's leader channel on Discord,
 which is #38's `notify.post_to_troop`. An individual poll's go to each person:
@@ -49,7 +53,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from .authenctication import AuthUser, has_any_role, require_auth_user, role_suffixes
@@ -85,6 +89,9 @@ MESSAGES = (
     (0.5, "Påminnelse: {title} väntar på ditt/ert svar. Svara i Campfire senast {closes}."),
     (0.95, "Sista påminnelsen: {title} stänger {closes}. Svara i Campfire innan dess."),
 )
+# The message that a response was given, sent once it is saved. It goes where the
+# poll's other messages go, so it too names no one.
+RECEIPT = "Svar sparat: {title}. Svaret kan ändras i Campfire till {closes}."
 # The poll's page in Campfire, put after CAMPFIRE_URL at the end of each message.
 # Campfire decides the path; this is the one it is expected to have.
 CAMPFIRE_POLL_PATH = "/polls/{poll_id}"
@@ -111,7 +118,8 @@ class PollCreate(BaseModel):
         [],
         description="Who answers an individual poll: `al` (troop leaders), `cmt`, or both. Empty for a troop poll.",
     )
-    reminders: bool = Field(True, description="False sends only the message when the poll opens.")
+    opening_message: bool = Field(True, description="False sends no message when the poll opens.")
+    reminders: bool = Field(True, description="False sends no reminders to those who have not responded.")
 
     @model_validator(mode="after")
     def _check(self):
@@ -137,6 +145,7 @@ class PollUpdate(BaseModel):
     audience: list[Audience] | None = Field(
         None, description="Not empty for an individual poll, and empty for a troop poll."
     )
+    opening_message: bool | None = None
     reminders: bool | None = None
 
     @model_validator(mode="after")
@@ -159,6 +168,7 @@ class Poll(BaseModel):
     closes_at: datetime
     options: list[str]
     audience: list[str]
+    opening_message: bool
     reminders: bool
     state: Literal["upcoming", "open", "closed"]
 
@@ -194,6 +204,7 @@ async def db_init_tables() -> None:
             closes_at      TIMESTAMPTZ  NOT NULL,
             options        TEXT[]       NOT NULL,
             audience       TEXT[]       NOT NULL DEFAULT '{}',
+            opening_message BOOLEAN     NOT NULL DEFAULT TRUE,
             reminders      BOOLEAN      NOT NULL DEFAULT TRUE,
             messages_sent  INTEGER      NOT NULL DEFAULT 0
         )
@@ -226,8 +237,10 @@ async def db_init_tables() -> None:
 async def db_insert_poll(creator_id: int, poll: PollCreate):
     return await db_fetchrow(
         """
-        INSERT INTO polls (creator_id, type, title, description, opens_at, closes_at, options, audience, reminders)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        INSERT INTO polls (
+            creator_id, type, title, description, opens_at, closes_at, options, audience, opening_message, reminders
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING *
         """,
         creator_id,
@@ -238,6 +251,7 @@ async def db_insert_poll(creator_id: int, poll: PollCreate):
         poll.closes_at,
         poll.options,
         poll.audience,
+        poll.opening_message,
         poll.reminders,
     )
 
@@ -259,12 +273,13 @@ async def db_update_poll(
     closes_at: datetime,
     options: list[str],
     audience: list[str],
+    opening_message: bool,
     reminders: bool,
 ):
     return await db_fetchrow(
         """
         UPDATE polls SET title = $2, description = $3, opens_at = $4, closes_at = $5, options = $6,
-            audience = $7, reminders = $8
+            audience = $7, opening_message = $8, reminders = $9
         WHERE id = $1
         RETURNING *
         """,
@@ -275,6 +290,7 @@ async def db_update_poll(
         closes_at,
         options,
         audience,
+        opening_message,
         reminders,
     )
 
@@ -284,7 +300,7 @@ async def db_delete_poll(poll_id: int) -> None:
 
 
 async def db_claim_message(poll_id: int, number: int) -> bool:
-    """Count message `number` (0 is the first) as sent. False if it already was, by another pass or pod."""
+    """Count message `number` (0 is the first) as sent or passed over. False if it already was, by another pass or pod."""
     row = await db_fetchrow(
         "UPDATE polls SET messages_sent = $2 + 1 WHERE id = $1 AND messages_sent = $2 RETURNING id",
         poll_id,
@@ -364,6 +380,16 @@ def _recipients(poll) -> list:
     return sorted(member for member, info in participants.items() if has_any_role(info.get("roles") or [], roles))
 
 
+def _message(poll, text: str) -> str:
+    """`text` filled in with the poll's title and its closing time in Swedish, and the poll's link after it."""
+    closes = poll["closes_at"].astimezone(STOCKHOLM)
+    closes_text = f"{WEEKDAYS[closes.weekday()]} {closes.day} {MONTHS[closes.month - 1]} kl. {closes:%H:%M}"
+    message = text.format(title=poll["title"], closes=closes_text)
+    if settings.CAMPFIRE_URL:
+        message += " " + settings.CAMPFIRE_URL.rstrip("/") + CAMPFIRE_POLL_PATH.format(poll_id=poll["id"])
+    return message
+
+
 async def _post_to_troop(troop: str, message: str) -> None:
     """Stands in for #38's notify.post_to_troop, which posts in the troop's leader channel on Discord."""
     logger.info("Message to troop %s not posted, no Discord yet: %s", troop, message)
@@ -383,13 +409,15 @@ async def _send_due_messages() -> None:
         troop_poll = poll["type"] == "troop"
         # How far into its open period the poll is, from 0 to 1.
         progress = (now - poll["opens_at"]) / (poll["closes_at"] - poll["opens_at"])
-        # Without reminders, only the first message is ever due.
-        for number in range(poll["messages_sent"], len(MESSAGES) if poll["reminders"] else 1):
+        for number in range(poll["messages_sent"], len(MESSAGES)):
             point, text = MESSAGES[number]
             if progress < point:
                 break
             if not await db_claim_message(poll["id"], number):
                 break  # Another pod got there first and sends it.
+            # A message that is turned off is counted when it falls due, but not sent, then or later.
+            if not (poll["opening_message"] if number == 0 else poll["reminders"]):
+                continue
 
             recipients = _recipients(poll)
             if number > 0:  # A reminder goes only to those who have not responded.
@@ -397,11 +425,7 @@ async def _send_due_messages() -> None:
                 responded = {row["troop"] if troop_poll else row["respondent_id"] for row in rows}
                 recipients = [recipient for recipient in recipients if recipient not in responded]
 
-            closes = poll["closes_at"].astimezone(STOCKHOLM)
-            closes_text = f"{WEEKDAYS[closes.weekday()]} {closes.day} {MONTHS[closes.month - 1]} kl. {closes:%H:%M}"
-            message = text.format(title=poll["title"], closes=closes_text)
-            if settings.CAMPFIRE_URL:
-                message += " " + settings.CAMPFIRE_URL.rstrip("/") + CAMPFIRE_POLL_PATH.format(poll_id=poll["id"])
+            message = _message(poll, text)
 
             logger.info("Poll %d: sending message %d to %d recipients", poll["id"], number + 1, len(recipients))
             for recipient in recipients:
@@ -475,7 +499,8 @@ router = APIRouter(responses={403: {"description": "The caller's roles give no a
     summary="Schedule a poll",
     description=(
         "Adds a poll that opens at `opens_at` and closes at `closes_at`. Both need a time zone. "
-        "A poll whose `opens_at` has passed is open at once, and those in it are told within a minute. "
+        "A poll whose `opens_at` has passed is open at once, and those in it are told within a minute, "
+        "unless `opening_message` is false. "
         "An individual poll needs an `audience`, and a troop poll has none."
     ),
     responses={
@@ -533,8 +558,9 @@ async def get_poll(poll_id: int, poll=Depends(_poll)):
     summary="Change a poll",
     description=(
         "Changes the fields that are given and leaves the others. A poll that is open can still get a new "
-        "`closes_at`, also one that closes it now, and have `reminders` turned on or off, but not get a new "
-        "`opens_at`, `options` or `audience`. Messages that have already gone out are not sent again. The "
+        "`closes_at`, also one that closes it now, and have `opening_message` and `reminders` turned on or "
+        "off, but not get a new `opens_at`, `options` or `audience`. Messages whose time has passed are not "
+        "sent again, also ones that were turned off then and are turned on later. The "
         "type never changes, and only an individual poll has an audience. A field sent with the value the poll "
         "already has is no change, so a poll read with GET can be sent back with only `closes_at` changed."
     ),
@@ -584,6 +610,7 @@ async def update_poll(
         closes_at,
         options,
         audience,
+        poll["opening_message"] if update.opening_message is None else update.opening_message,
         poll["reminders"] if update.reminders is None else update.reminders,
     )
     return Poll(**row, state=_state(row, _now()))
@@ -666,7 +693,8 @@ async def list_troop_responses(troop: str, user: AuthUser = Depends(_require_pol
         "Sets the caller's response while the poll is open, replacing the one there was. For a troop poll it "
         "is the response of the caller's own troop: any of the troop's leaders may give it, and the response "
         "records who did it last. For an individual poll it is the caller's own, and the caller must be in "
-        "the poll's audience."
+        "the poll's audience. Once it is saved, a receipt with the poll's link goes to the troop's leader "
+        "channel (troop poll) or to the caller (individual poll)."
     ),
     responses={
         200: {"description": "The response."},
@@ -677,7 +705,11 @@ async def list_troop_responses(troop: str, user: AuthUser = Depends(_require_pol
     },
 )
 async def respond(
-    poll_id: int, response: ResponseUpdate, poll=Depends(_poll), user: AuthUser = Depends(_require_poll_user)
+    poll_id: int,
+    response: ResponseUpdate,
+    background_tasks: BackgroundTasks,
+    poll=Depends(_poll),
+    user: AuthUser = Depends(_require_poll_user),
 ):
     if poll["type"] == "troop":
         # Answered for the caller's own troop, which their leader role names. A person has one
@@ -694,4 +726,11 @@ async def respond(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Poll is not open")
     if response.status not in poll["options"]:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Not one of the poll's options")
-    return PollResponse(**await db_upsert_response(poll_id, troop, user.user_id, response))
+    row = await db_upsert_response(poll_id, troop, user.user_id, response)
+    # Sent after the reply, so that a message service that is away does not undo a saved response.
+    receipt = _message(poll, RECEIPT)
+    if troop is not None:
+        background_tasks.add_task(_post_to_troop, troop, receipt)
+    else:
+        background_tasks.add_task(_notify_person, user.user_id, receipt)
+    return PollResponse(**row)

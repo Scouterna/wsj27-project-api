@@ -58,6 +58,7 @@ def _poll(**fields) -> dict:
         "closes_at": CLOSES,
         "options": ["grön", "gul", "röd"],
         "audience": [],
+        "opening_message": True,
         "reminders": True,
         "messages_sent": 0,
     } | fields
@@ -124,7 +125,7 @@ class FakeDatabase:
             case "SELECT", "polls":
                 return self._poll(args[0])
             case "INSERT", "polls":
-                columns = re.search(r"\((.*?)\) VALUES", statement.sql)[1].split(", ")
+                columns = [column.strip() for column in re.search(r"\((.*?)\) VALUES", statement.sql)[1].split(",")]
                 row = _poll(id=len(self.polls) + 1, **dict(zip(columns, args, strict=True)))
                 self.polls.append(row)
                 return row
@@ -136,7 +137,16 @@ class FakeDatabase:
                 return {"id": row["id"]}
             case "UPDATE", "polls":
                 row = self._poll(args[0])
-                fields = ("title", "description", "opens_at", "closes_at", "options", "audience", "reminders")
+                fields = (
+                    "title",
+                    "description",
+                    "opens_at",
+                    "closes_at",
+                    "options",
+                    "audience",
+                    "opening_message",
+                    "reminders",
+                )
                 row.update(zip(fields, args[1:], strict=True))
                 return row
             case "INSERT", "poll_responses":
@@ -329,6 +339,7 @@ def test_creating_a_poll_records_who_did_it(db, clock):
         "closes_at": "2027-07-31T02:00:00Z",
         "options": ["grön", "gul", "röd"],
         "audience": [],
+        "opening_message": True,
         "reminders": True,
         "state": "upcoming",
     }
@@ -684,6 +695,7 @@ def test_creating_an_individual_poll(db, clock):
         (-1, {"audience": []}, 422),
         (-1, {"audience": ["cmt", "cmt"]}, 422),
         (2, {"reminders": False}, 200),
+        (2, {"opening_message": False}, 200),
         (2, {"type": "troop"}, 200),  # not a field that can be changed, so left out
     ],
 )
@@ -797,4 +809,62 @@ def test_without_reminders_only_the_opening_message_goes_out(db, clock, posted, 
     assert _pass(clock, 0, posted) != []
     assert _pass(clock, 10, posted) == []
     assert _pass(clock, 19, posted) == []
+    assert db.polls[0]["messages_sent"] == len(poll_module.MESSAGES)
+
+
+def test_without_the_opening_message_only_the_reminders_go_out(db, clock, posted):
+    db.polls = [_poll(opening_message=False)]
+    db.responses = [_response(troop="2")]
+    assert _pass(clock, 0, posted) == []
     assert db.polls[0]["messages_sent"] == 1
+    assert _pass(clock, 10, posted) == [("1", "Påminnelse:"), ("10", "Påminnelse:")]
+    assert _pass(clock, 19, posted) == [("1", "Sista"), ("10", "Sista")]
+
+
+def test_with_both_turned_off_no_message_goes_out(db, clock, posted):
+    db.polls = [_poll(opening_message=False, reminders=False)]
+    assert _pass(clock, 19.5, posted) == []
+    assert db.polls[0]["messages_sent"] == len(poll_module.MESSAGES)
+
+
+def test_a_message_turned_on_after_its_time_is_not_sent(db, clock, posted):
+    db.polls = [_poll(opening_message=False, reminders=False)]
+    assert _pass(clock, 12, posted) == []
+    db.polls[0] |= {"opening_message": True, "reminders": True}
+    assert _pass(clock, 12.02, posted) == []
+    assert _pass(clock, 19, posted) == [("1", "Sista"), ("2", "Sista"), ("10", "Sista")]
+
+
+# --- Receipts -----------------------------------------------------------------
+
+
+def test_a_troops_response_is_posted_in_the_troops_channel_with_the_link(db, posted, monkeypatch):
+    monkeypatch.setattr(poll_module.settings, "CAMPFIRE_URL", "https://campfire.example.org")
+    db.polls = [_poll()]
+    _client(LEADER_1).put("/polls/1/response", json={"status": "gul", "comment": "Två är förkylda"})
+    assert posted == [
+        (
+            "1",
+            (
+                "Svar sparat: Avdelningens hälsa. Svaret kan ändras i Campfire till lör 31 juli kl. 04:00. "
+                "https://campfire.example.org/polls/1"
+            ),
+        )
+    ]
+
+
+def test_a_persons_response_is_sent_to_them(db, posted, monkeypatch):
+    monkeypatch.setattr(poll_module.settings, "CAMPFIRE_URL", "")
+    db.polls = [_individual()]
+    _client(LEADER_1, member=1000001).put("/polls/1/response", json={"status": "Ja"})
+    assert posted == [
+        (1000001, "Svar sparat: Kommer du på mötet?. Svaret kan ändras i Campfire till lör 31 juli kl. 04:00.")
+    ]
+
+
+@pytest.mark.parametrize(("hours", "body"), [(-1, GREEN), (2, {"status": "orange"})])
+def test_a_response_that_is_not_taken_gets_no_receipt(db, clock, posted, hours, body):
+    db.polls = [_poll()]
+    clock.now = _at(hours)
+    assert _client(LEADER_1).put("/polls/1/response", json=body).status_code in {409, 422}
+    assert posted == []
